@@ -130,25 +130,31 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
       currentStreamEvent: curEvent, eventMatchData: matchData, activeEvents: events,
     } = stateRef.current;
 
-    // Re-verify the match is still live at fire-time
+    // Re-verify this is still the LATEST on-field match at fire-time
+    // (Nexus keeps stale statuses, so we must confirm this is the most recent one)
     const eventMatches = matchData[eventKey] || [];
-    const live = eventMatches.find(m => m.label === matchObj.label);
-    const ls = normalizeStatus(live?.status);
-    if (!live || (ls !== 'onField' && ls !== 'inProgress')) return;
+    const onFieldNow = eventMatches.filter(m => {
+      const s = normalizeStatus(m.status);
+      return s === 'onField' || s === 'inProgress';
+    });
+    const latestOnField = latestMatch(onFieldNow);
+    if (!latestOnField || latestOnField.label !== matchObj.label) return;
 
-    // Build full ranked candidate list across all events
+    // Build full ranked candidate list — one entry per event (latest on-field only)
     const candidates = [];
     for (const evt of events) {
-      for (const m of matchData[evt.key] || []) {
+      const evtOnField = (matchData[evt.key] || []).filter(m => {
         const s = normalizeStatus(m.status);
-        if ((s === 'onField' || s === 'inProgress') && hasFav(m, fav)) {
-          candidates.push({
-            eventKey: evt.key,
-            match: m,
-            matchKey: `${evt.key}_${m.label}`,
-            priority: bestPriority(m, fav),
-          });
-        }
+        return s === 'onField' || s === 'inProgress';
+      });
+      const latest = latestMatch(evtOnField);
+      if (latest && hasFav(latest, fav)) {
+        candidates.push({
+          eventKey: evt.key,
+          match: latest,
+          matchKey: `${evt.key}_${latest.label}`,
+          priority: bestPriority(latest, fav),
+        });
       }
     }
     candidates.sort((a, b) => a.priority - b.priority);
@@ -188,10 +194,15 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   useEffect(() => {
     if (!isWatchingMatch || !currentStreamEvent) return;
     const matches = eventMatchData[currentStreamEvent] || [];
-    const hasActive = matches.some(m => {
+    // Only consider the latest on-field match — stale ones don't count
+    const onFieldMatches = matches.filter(m => {
       const s = normalizeStatus(m.status);
       return s === 'onField' || s === 'inProgress';
     });
+    const latestActive = latestMatch(onFieldMatches);
+    // Match is "over" when no on-field match exists, or when the latest one
+    // matches our watchingMatchKey and has moved to a different status
+    const hasActive = latestActive != null;
     if (!hasActive) {
       setIsWatchingMatch(false);
       setWatchingMatchKey(null);
@@ -199,35 +210,50 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     }
   }, [eventMatchData, isWatchingMatch, currentStreamEvent, resolveDeferred]);
 
+// ─── Pick the "real" current match from a list where stale entries linger ────
+// Nexus never clears old "On field" statuses. The true current match is the one
+// with the most recent actualStartTime, or estimatedStartTime as fallback,
+// or last in the array (Nexus sorts by play order).
+  function latestMatch(matches) {
+    return matches.reduce((best, m) => {
+      if (!best) return m;
+      const bestTime = best.times?.actualStartTime ?? best.times?.estimatedStartTime ?? 0;
+      const mTime    = m.times?.actualStartTime    ?? m.times?.estimatedStartTime    ?? 0;
+      return mTime >= bestTime ? m : best;
+    }, null);
+  }
+
   // ── evaluator — schedules timers for newly-active fav matches ────────────────
   const evaluateMatches = useCallback((updatedData, events) => {
     const { favTeams: fav, offsetSeconds: offset } = stateRef.current;
     if (!fav || fav.length === 0) return;
 
     for (const event of events) {
-      for (const match of updatedData[event.key] || []) {
-        const s = normalizeStatus(match.status);
-        if ((s !== 'onField' && s !== 'inProgress') || !hasFav(match, fav)) continue;
+      const allMatches = updatedData[event.key] || [];
 
-        // Use label as stable match ID (e.g. "Qualification 12")
-        const timerKey = `${event.key}_${match.label}`;
-        if (timerRefs.current[timerKey]) continue;
+      // Nexus never clears stale "On field" statuses — find only the LATEST
+      // on-field match per event (by start timestamp) to avoid firing stale timers
+      const onFieldMatches = allMatches.filter(m => {
+        const s = normalizeStatus(m.status);
+        return s === 'onField' || s === 'inProgress';
+      });
+      const currentMatch = latestMatch(onFieldMatches);
 
-        const delayMs = Math.max(0, offset * 1000);
-        timerRefs.current[timerKey] = setTimeout(() => {
-          delete timerRefs.current[timerKey];
-          onMatchTimerFired(event.key, timerKey, match);
-        }, delayMs);
-      }
-    }
-
-    // Cancel timers for completed matches
-    for (const event of events) {
-      for (const match of updatedData[event.key] || []) {
-        const s = normalizeStatus(match.status);
-        if (s === 'complete') {
-          clearSwitchTimer(`${event.key}_${match.label}`);
+      if (currentMatch && hasFav(currentMatch, fav)) {
+        const timerKey = `${event.key}_${currentMatch.label}`;
+        if (!timerRefs.current[timerKey]) {
+          const delayMs = Math.max(0, offset * 1000);
+          timerRefs.current[timerKey] = setTimeout(() => {
+            delete timerRefs.current[timerKey];
+            onMatchTimerFired(event.key, timerKey, currentMatch);
+          }, delayMs);
         }
+      }
+
+      // Cancel timers for any match that is no longer the current one
+      for (const match of allMatches) {
+        if (match.label === currentMatch?.label) continue;
+        clearSwitchTimer(`${event.key}_${match.label}`);
       }
     }
   }, [onMatchTimerFired, clearSwitchTimer]);

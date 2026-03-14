@@ -32,17 +32,33 @@ export default function MatchStatusBar({ eventMatchData, currentStreamEvent, fav
   const matches = eventMatchData[currentStreamEvent] || [];
   const event = activeEvents?.find(e => e.key === currentStreamEvent);
 
-  // Nexus statuses: "On field" → onField, "In progress" → inProgress
-  const activeMatch = matches.find(m => {
+  // Nexus never clears old "On field" statuses — every past match stays marked onField forever.
+  // The real current match is the LAST one in the sorted array with onField/inProgress status,
+  // or better: find the match with the most recent estimatedStartTime / actualStartTime.
+  // Fallback: use array position (Nexus sorts by play order, so last = most recent).
+  const activeMatches = matches.filter(m => {
     const s = normalizeStatus(m.status);
     return s === 'onField' || s === 'inProgress';
   });
+  // Pick the one with the latest estimated/actual start time, or last in array
+  const activeMatch = activeMatches.reduce((best, m) => {
+    if (!best) return m;
+    const bestTime = best.times?.actualStartTime ?? best.times?.estimatedStartTime ?? 0;
+    const mTime    = m.times?.actualStartTime    ?? m.times?.estimatedStartTime    ?? 0;
+    return mTime >= bestTime ? m : best;
+  }, null);
 
-  // On deck or now queuing
-  const deckMatch = matches.find(m => {
+  // On deck: last queuing/onDeck match (same stale-status problem)
+  const deckMatches = matches.filter(m => {
     const s = normalizeStatus(m.status);
     return s === 'onDeck' || s === 'queuing';
   });
+  const deckMatch = deckMatches.reduce((best, m) => {
+    if (!best) return m;
+    const bestTime = best.times?.estimatedOnDeckTime ?? best.times?.estimatedQueueTime ?? 0;
+    const mTime    = m.times?.estimatedOnDeckTime    ?? m.times?.estimatedQueueTime    ?? 0;
+    return mTime >= bestTime ? m : best;
+  }, null);
 
   const getTeams = (m) => {
     if (!m) return { red: [], blue: [] };
