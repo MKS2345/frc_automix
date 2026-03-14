@@ -298,7 +298,6 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   }, [evaluateMatches]);
 
   // ── stream URL builder ───────────────────────────────────────────────────────
-  // Build embed URL for a single webcast object
   const buildEmbedUrl = useCallback((wc, host) => {
     switch (wc.type) {
       case 'twitch':
@@ -312,34 +311,31 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     }
   }, []);
 
-  // Try YouTube oEmbed (no API key needed) to check if a stream is currently live.
-  // Returns true if the video is a live stream, false otherwise.
-  const isYoutubeLive = async (videoId) => {
+  // Check if a YouTube video is currently live via our serverless proxy
+  // (avoids CORS, does a real page scrape for JSON-LD isLiveBroadcast signal)
+  const checkYoutubeLive = useCallback(async (videoId) => {
     try {
       const res = await fetch(
-          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+          `/api/youtube-live?videoId=${encodeURIComponent(videoId)}`,
+          { headers: { 'x-app-password': sessionStorage.getItem('appPassword') || '' } }
       );
       if (!res.ok) return false;
       const data = await res.json();
-      // oEmbed doesn't directly say "live" but live streams have no thumbnail_url
-      // or their title contains "LIVE" — use as a heuristic
-      const title = (data.title || '').toUpperCase();
-      return title.includes('LIVE') || title.includes('DAY') || !data.thumbnail_url;
+      return data.live === true;
     } catch {
       return false;
     }
-  };
+  }, []);
 
   const loadStreamUrl = useCallback(async (event) => {
     if (!event?.webcasts?.length) return;
     const host = window.location.hostname;
 
-    // Build all webcasts into embed URLs
+    // Build embed URLs for all webcasts
     const allWebcasts = event.webcasts
         .map((wc, i) => {
           const url = buildEmbedUrl(wc, host);
           if (!url) return null;
-          // Label: "Stream 1", "Stream 2" etc, or use type+channel hint
           const label = event.webcasts.length > 1
               ? `Stream ${i + 1} (${wc.type})`
               : wc.type.charAt(0).toUpperCase() + wc.type.slice(1);
@@ -349,32 +345,67 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
 
     if (allWebcasts.length === 0) return;
 
-    // Default to last webcast (TBA lists streams chronologically; last = most recent day)
-    let activeIdx = allWebcasts.length - 1;
+    // Check if user has pinned a specific stream for this event
+    const pinned = (() => {
+      try {
+        const stored = localStorage.getItem(`frc-stream-pin-${event.key}`);
+        const idx = stored !== null ? parseInt(stored, 10) : -1;
+        return idx >= 0 && idx < allWebcasts.length ? idx : -1;
+      } catch { return -1; }
+    })();
 
-    // Try to find a live YouTube stream — check from last to first
-    for (let i = allWebcasts.length - 1; i >= 0; i--) {
-      const wc = allWebcasts[i];
-      if (wc.type === 'youtube') {
-        const live = await isYoutubeLive(wc.raw.channel);
-        if (live) { activeIdx = i; break; }
-      }
+    if (pinned !== -1) {
+      // User has manually chosen — respect their choice, skip live detection
+      setStreamUrls(prev => ({
+        ...prev,
+        [event.key]: { webcasts: allWebcasts, activeIdx: pinned, pinned: true },
+      }));
+      return;
     }
 
+    // No pin — set a quick default first (last in array) so the UI isn't blank
     setStreamUrls(prev => ({
       ...prev,
-      [event.key]: { webcasts: allWebcasts, activeIdx },
+      [event.key]: { webcasts: allWebcasts, activeIdx: allWebcasts.length - 1, pinned: false },
     }));
-  }, [buildEmbedUrl]);
 
-  // Public: manually select a specific webcast index for an event
+    // Then run live detection in background: check each YouTube stream
+    // Check ALL of them concurrently, pick the one that's live
+    const liveChecks = await Promise.all(
+        allWebcasts.map(async (wc, i) => {
+          if (wc.type !== 'youtube') return { i, live: false };
+          const live = await checkYoutubeLive(wc.raw.channel);
+          return { i, live };
+        })
+    );
+
+    const liveHit = liveChecks.find(c => c.live);
+    if (liveHit) {
+      setStreamUrls(prev => {
+        const entry = prev[event.key];
+        // Don't override if user pinned while we were checking
+        if (entry?.pinned) return prev;
+        return { ...prev, [event.key]: { ...entry, activeIdx: liveHit.i } };
+      });
+    }
+  }, [buildEmbedUrl, checkYoutubeLive]);
+
+  // Public: manually select and PIN a webcast for an event
   const setActiveWebcast = useCallback((eventKey, idx) => {
+    try { localStorage.setItem(`frc-stream-pin-${eventKey}`, String(idx)); } catch {}
     setStreamUrls(prev => {
       const entry = prev[eventKey];
       if (!entry) return prev;
-      return { ...prev, [eventKey]: { ...entry, activeIdx: idx } };
+      return { ...prev, [eventKey]: { ...entry, activeIdx: idx, pinned: true } };
     });
   }, []);
+
+  // Public: clear pin and re-run live detection for an event
+  const clearStreamPin = useCallback((eventKey) => {
+    try { localStorage.removeItem(`frc-stream-pin-${eventKey}`); } catch {}
+    const event = stateRef.current.activeEvents.find(e => e.key === eventKey);
+    if (event) loadStreamUrl(event);
+  }, [loadStreamUrl]);
 
   // ── load active events ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -434,6 +465,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     activeEvents, eventMatchData, currentStreamEvent,
     streamUrls, notification, deferredSwitch,
     categorizedEvents, isWatchingMatch,
-    switchToEvent, acceptPendingSwitch, dismissNotification, pollMatches, setActiveWebcast,
+    switchToEvent, acceptPendingSwitch, dismissNotification,
+    pollMatches, setActiveWebcast, clearStreamPin,
   };
 }

@@ -1,6 +1,6 @@
 // src/components/StreamViewer.jsx
 
-export default function StreamViewer({ streamInfo, eventName, streamEntry, onSelectWebcast }) {
+export default function StreamViewer({ streamInfo, eventName, streamEntry, onSelectWebcast, onClearPin }) {
   if (!streamInfo) {
     return (
         <div style={styles.empty}>
@@ -51,8 +51,20 @@ export default function StreamViewer({ streamInfo, eventName, streamEntry, onSel
                       onClick={() => onSelectWebcast?.(i)}
                   >
                     {wc.label}
+                    {i === streamEntry.activeIdx && streamEntry.pinned && (
+                        <span style={{ marginLeft: 5, fontSize: 10 }}>📌</span>
+                    )}
                   </button>
               ))}
+              {streamEntry.pinned && (
+                  <button
+                      style={{ ...styles.pickerBtn, borderColor: '#854d0e', color: '#fbbf24', fontSize: 11 }}
+                      onClick={() => onClearPin?.()}
+                      title="Clear manual selection and auto-detect live stream"
+                  >
+                    ↺ Auto
+                  </button>
+              )}
             </div>
         )}
         <iframe

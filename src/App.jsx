@@ -31,6 +31,7 @@ export default function App() {
     dismissNotification,
     pollMatches,
     setActiveWebcast,
+    clearStreamPin,
   } = useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated });
 
   if (!isAuthenticated) {
@@ -116,6 +117,7 @@ export default function App() {
                 streamEntry={currentStreamEntry}
                 eventName={currentEvent?.short_name || currentEvent?.name || currentStreamEvent}
                 onSelectWebcast={(idx) => currentStreamEvent && setActiveWebcast(currentStreamEvent, idx)}
+                onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
             />
           </div>
         </div>
