@@ -65,6 +65,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
 
   const [activeEvents,    setActiveEvents]    = useState([]);
   const [eventMatchData,  setEventMatchData]  = useState({});
+  // streamUrls shape: { [eventKey]: { webcasts: [{url, type, label, raw}], activeIdx: number } }
   const [streamUrls,      setStreamUrls]      = useState({});
   const [currentStreamEvent, setCurrentStreamEvent] = useState(null);
   const [watchingMatchKey,   setWatchingMatchKey]   = useState(null);
@@ -297,30 +298,114 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   }, [evaluateMatches]);
 
   // ── stream URL builder ───────────────────────────────────────────────────────
-  const loadStreamUrl = useCallback((event) => {
-    if (!event?.webcasts?.length) return;
-    const wc   = event.webcasts[0];
-    const host = window.location.hostname;
-    let url    = '';
-
+  const buildEmbedUrl = useCallback((wc, host) => {
     switch (wc.type) {
       case 'twitch':
-        url = `https://player.twitch.tv/?channel=${wc.channel}&parent=${host}&autoplay=true`;
-        break;
+        return `https://player.twitch.tv/?channel=${wc.channel}&parent=${host}&autoplay=true`;
       case 'youtube':
-        url = `https://www.youtube.com/embed/${wc.channel}?autoplay=1&rel=0`;
-        break;
+        return `https://www.youtube.com/embed/${wc.channel}?autoplay=1&rel=0`;
       case 'livestream':
-        url = `https://livestream.com/accounts/${wc.channel}/events/${wc.file}/player`;
-        break;
+        return `https://livestream.com/accounts/${wc.channel}/events/${wc.file}/player`;
       default:
-        url = wc.channel?.startsWith('http') ? wc.channel : '';
-    }
-
-    if (url) {
-      setStreamUrls(prev => ({ ...prev, [event.key]: { url, type: wc.type, raw: wc } }));
+        return wc.channel?.startsWith('http') ? wc.channel : '';
     }
   }, []);
+
+  // Check if a YouTube video is currently live via our serverless proxy
+  // (avoids CORS, does a real page scrape for JSON-LD isLiveBroadcast signal)
+  const checkYoutubeLive = useCallback(async (videoId) => {
+    try {
+      const res = await fetch(
+          `/api/youtube-live?videoId=${encodeURIComponent(videoId)}`,
+          { headers: { 'x-app-password': sessionStorage.getItem('appPassword') || '' } }
+      );
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.live === true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const loadStreamUrl = useCallback(async (event) => {
+    if (!event?.webcasts?.length) return;
+    const host = window.location.hostname;
+
+    // Build embed URLs for all webcasts
+    const allWebcasts = event.webcasts
+        .map((wc, i) => {
+          const url = buildEmbedUrl(wc, host);
+          if (!url) return null;
+          const label = event.webcasts.length > 1
+              ? `Stream ${i + 1} (${wc.type})`
+              : wc.type.charAt(0).toUpperCase() + wc.type.slice(1);
+          return { url, type: wc.type, label, raw: wc, index: i };
+        })
+        .filter(Boolean);
+
+    if (allWebcasts.length === 0) return;
+
+    // Check if user has pinned a specific stream for this event
+    const pinned = (() => {
+      try {
+        const stored = localStorage.getItem(`frc-stream-pin-${event.key}`);
+        const idx = stored !== null ? parseInt(stored, 10) : -1;
+        return idx >= 0 && idx < allWebcasts.length ? idx : -1;
+      } catch { return -1; }
+    })();
+
+    if (pinned !== -1) {
+      // User has manually chosen — respect their choice, skip live detection
+      setStreamUrls(prev => ({
+        ...prev,
+        [event.key]: { webcasts: allWebcasts, activeIdx: pinned, pinned: true },
+      }));
+      return;
+    }
+
+    // No pin — set a quick default first (last in array) so the UI isn't blank
+    setStreamUrls(prev => ({
+      ...prev,
+      [event.key]: { webcasts: allWebcasts, activeIdx: allWebcasts.length - 1, pinned: false },
+    }));
+
+    // Then run live detection in background: check each YouTube stream
+    // Check ALL of them concurrently, pick the one that's live
+    const liveChecks = await Promise.all(
+        allWebcasts.map(async (wc, i) => {
+          if (wc.type !== 'youtube') return { i, live: false };
+          const live = await checkYoutubeLive(wc.raw.channel);
+          return { i, live };
+        })
+    );
+
+    const liveHit = liveChecks.find(c => c.live);
+    if (liveHit) {
+      setStreamUrls(prev => {
+        const entry = prev[event.key];
+        // Don't override if user pinned while we were checking
+        if (entry?.pinned) return prev;
+        return { ...prev, [event.key]: { ...entry, activeIdx: liveHit.i } };
+      });
+    }
+  }, [buildEmbedUrl, checkYoutubeLive]);
+
+  // Public: manually select and PIN a webcast for an event
+  const setActiveWebcast = useCallback((eventKey, idx) => {
+    try { localStorage.setItem(`frc-stream-pin-${eventKey}`, String(idx)); } catch {}
+    setStreamUrls(prev => {
+      const entry = prev[eventKey];
+      if (!entry) return prev;
+      return { ...prev, [eventKey]: { ...entry, activeIdx: idx, pinned: true } };
+    });
+  }, []);
+
+  // Public: clear pin and re-run live detection for an event
+  const clearStreamPin = useCallback((eventKey) => {
+    try { localStorage.removeItem(`frc-stream-pin-${eventKey}`); } catch {}
+    const event = stateRef.current.activeEvents.find(e => e.key === eventKey);
+    if (event) loadStreamUrl(event);
+  }, [loadStreamUrl]);
 
   // ── load active events ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -380,6 +465,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     activeEvents, eventMatchData, currentStreamEvent,
     streamUrls, notification, deferredSwitch,
     categorizedEvents, isWatchingMatch,
-    switchToEvent, acceptPendingSwitch, dismissNotification, pollMatches,
+    switchToEvent, acceptPendingSwitch, dismissNotification,
+    pollMatches, setActiveWebcast, clearStreamPin,
   };
 }
