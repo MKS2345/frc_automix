@@ -20,25 +20,29 @@ import { nexusGetMatches, getCurrentEvents, getCurrentYear } from '../utils/api'
 const POLL_INTERVAL_MS = 15_000;
 
 // ─── Nexus status normalizer ─────────────────────────────────────────────────
+// Nexus returns human-readable strings: "Now queuing", "On deck", "On field",
+// "In progress", "Complete" (and "Awaiting results" after match ends)
 export function normalizeStatus(raw) {
   if (!raw) return 'unknown';
   const s = raw.toString().toLowerCase().replace(/[_\s-]/g, '');
-  if (s === 'onfield' || s === 'field')                    return 'onField';
-  if (s === 'inprogress' || s === 'playing' || s === 'active') return 'inProgress';
-  if (s === 'ondeck' || s === 'deck' || s === 'queued')    return 'onDeck';
-  if (s === 'complete' || s === 'done' || s === 'finished' || s === 'posted') return 'complete';
-  if (s === 'pending' || s === 'upcoming' || s === 'scheduled') return 'pending';
+  if (s === 'onfield')                                      return 'onField';
+  if (s === 'inprogress' || s === 'awaitingresults')        return 'inProgress';
+  if (s === 'ondeck')                                       return 'onDeck';
+  if (s === 'nowqueuing' || s === 'queuing')                return 'queuing';
+  if (s === 'complete' || s === 'done' || s === 'posted' || s === 'results') return 'complete';
   return 'unknown';
 }
 
 // ─── Team helpers ─────────────────────────────────────────────────────────────
+// Nexus redTeams/blueTeams are string arrays like ["1800", "600", "3100"]
+// No "frc" prefix — just plain team number strings
 export function teamsInMatch(match) {
   if (!match) return [];
   const red  = match.redTeams  || [];
   const blue = match.blueTeams || [];
   return [...red, ...blue]
-    .map(t => parseInt(t.toString().replace(/frc/i, ''), 10))
-    .filter(n => !isNaN(n));
+      .map(t => parseInt(t.toString().replace(/frc/i, ''), 10))
+      .filter(n => !isNaN(n));
 }
 
 function bestPriority(match, favTeams) {
@@ -93,9 +97,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   }, []);
 
   const switchToEvent = useCallback((eventKey) => {
-    Object.keys(timerRefs.current).forEach(k => {
-      clearTimeout(timerRefs.current[k]);
-    });
+    Object.keys(timerRefs.current).forEach(k => clearTimeout(timerRefs.current[k]));
     timerRefs.current = {};
     setCurrentStreamEvent(eventKey);
     setIsWatchingMatch(false);
@@ -120,20 +122,20 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     dismissNotification();
   }, [dismissNotification]);
 
-  // ── timer callback — fires offsetSeconds after a match hits onField ─────────
+  // ── timer callback ────────────────────────────────────────────────────────────
   const onMatchTimerFired = useCallback((eventKey, timerKey, matchObj) => {
     const {
       favTeams: fav, isWatchingMatch: watching,
       currentStreamEvent: curEvent, eventMatchData: matchData, activeEvents: events,
     } = stateRef.current;
 
-    // Re-verify the match is still live
+    // Re-verify the match is still live at fire-time
     const eventMatches = matchData[eventKey] || [];
-    const live = eventMatches.find(m => m.matchNumber === matchObj.matchNumber);
+    const live = eventMatches.find(m => m.label === matchObj.label);
     const ls = normalizeStatus(live?.status);
     if (!live || (ls !== 'onField' && ls !== 'inProgress')) return;
 
-    // Build full ranked candidate list across all events right now
+    // Build full ranked candidate list across all events
     const candidates = [];
     for (const evt of events) {
       for (const m of matchData[evt.key] || []) {
@@ -142,7 +144,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
           candidates.push({
             eventKey: evt.key,
             match: m,
-            matchKey: `${evt.key}_${m.matchNumber}`,
+            matchKey: `${evt.key}_${m.label}`,
             priority: bestPriority(m, fav),
           });
         }
@@ -153,10 +155,8 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     const best = candidates[0];
     const thisMatchKey = timerKey;
 
-    // FLOW C: a higher-priority match exists → this timer is not the winner; bail out
-    if (best && best.matchKey !== thisMatchKey) {
-      return;
-    }
+    // FLOW C: a higher-priority match exists → bail, its timer will fire
+    if (best && best.matchKey !== thisMatchKey) return;
 
     // FLOW B: mid-match on a different event → popup + defer
     if (watching && curEvent !== eventKey) {
@@ -183,7 +183,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     dismissNotification();
   }, [dismissNotification]);
 
-  // ── detect match end → release lock → resolve deferred ─────────────────────
+  // ── detect match end → release lock ─────────────────────────────────────────
   useEffect(() => {
     if (!isWatchingMatch || !currentStreamEvent) return;
     const matches = eventMatchData[currentStreamEvent] || [];
@@ -198,7 +198,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     }
   }, [eventMatchData, isWatchingMatch, currentStreamEvent, resolveDeferred]);
 
-  // ── evaluator — schedules timers for newly-active fav matches ───────────────
+  // ── evaluator — schedules timers for newly-active fav matches ────────────────
   const evaluateMatches = useCallback((updatedData, events) => {
     const { favTeams: fav, offsetSeconds: offset } = stateRef.current;
     if (!fav || fav.length === 0) return;
@@ -208,8 +208,9 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
         const s = normalizeStatus(match.status);
         if ((s !== 'onField' && s !== 'inProgress') || !hasFav(match, fav)) continue;
 
-        const timerKey = `${event.key}_${match.matchNumber}`;
-        if (timerRefs.current[timerKey]) continue; // already scheduled
+        // Use label as stable match ID (e.g. "Qualification 12")
+        const timerKey = `${event.key}_${match.label}`;
+        if (timerRefs.current[timerKey]) continue;
 
         const delayMs = Math.max(0, offset * 1000);
         timerRefs.current[timerKey] = setTimeout(() => {
@@ -219,18 +220,18 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
       }
     }
 
-    // Cancel timers for matches that completed
+    // Cancel timers for completed matches
     for (const event of events) {
       for (const match of updatedData[event.key] || []) {
         const s = normalizeStatus(match.status);
-        if (s === 'complete' || s === 'pending') {
-          clearSwitchTimer(`${event.key}_${match.matchNumber}`);
+        if (s === 'complete') {
+          clearSwitchTimer(`${event.key}_${match.label}`);
         }
       }
     }
   }, [onMatchTimerFired, clearSwitchTimer]);
 
-  // ── poll Nexus ──────────────────────────────────────────────────────────────
+  // ── poll Nexus ───────────────────────────────────────────────────────────────
   const pollMatches = useCallback(async () => {
     const { activeEvents: events } = stateRef.current;
     if (!events?.length) return;
@@ -239,9 +240,8 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     await Promise.allSettled(events.map(async (event) => {
       try {
         const raw = await nexusGetMatches(event.key);
-        updates[event.key] = Array.isArray(raw)
-          ? raw
-          : (raw?.matches || raw?.schedule || []);
+        // Nexus returns { eventKey, matches: [...], ... }
+        updates[event.key] = raw?.matches || (Array.isArray(raw) ? raw : []);
       } catch (e) {
         if (e.message === 'UNAUTHORIZED') {
           sessionStorage.removeItem('appPassword');
@@ -258,7 +258,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     });
   }, [evaluateMatches]);
 
-  // ── stream URL builder ──────────────────────────────────────────────────────
+  // ── stream URL builder ───────────────────────────────────────────────────────
   const loadStreamUrl = useCallback((event) => {
     if (!event?.webcasts?.length) return;
     const wc   = event.webcasts[0];
@@ -284,7 +284,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     }
   }, []);
 
-  // ── load active events ──────────────────────────────────────────────────────
+  // ── load active events ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
     const load = async () => {
@@ -305,7 +305,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     return () => clearInterval(id);
   }, [isAuthenticated, loadStreamUrl]);
 
-  // ── start polling once events exist ────────────────────────────────────────
+  // ── start polling once events exist ─────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated || activeEvents.length === 0) return;
     pollMatches();
@@ -313,14 +313,14 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     return () => clearInterval(pollRef.current);
   }, [isAuthenticated, activeEvents, pollMatches]);
 
-  // ── global cleanup ──────────────────────────────────────────────────────────
+  // ── global cleanup ───────────────────────────────────────────────────────────
   useEffect(() => () => {
     Object.values(timerRefs.current).forEach(clearTimeout);
     if (pollRef.current) clearInterval(pollRef.current);
     if (notifRef.current) clearTimeout(notifRef.current);
   }, []);
 
-  // ── sidebar categorisation ──────────────────────────────────────────────────
+  // ── sidebar categorization ───────────────────────────────────────────────────
   const categorizedEvents = (() => {
     const fav = favTeams || [];
     const withFavPlaying = [], withFavAtEvent = [], others = [];

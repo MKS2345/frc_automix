@@ -28,8 +28,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing eventCode parameter' });
   }
 
-  // Nexus match schedule endpoint
-  const nexusUrl = `https://frc.nexus/api/v1/event/${eventCode}/matches`;
+  // Correct Nexus endpoint: GET /api/v1/event/{eventKey}
+  // Returns { eventKey, dataAsOfTime, matches: [], announcements: [], partsRequests: [] }
+  // NOTE: no /matches suffix — the matches array is inside the response body
+  const nexusUrl = `https://frc.nexus/api/v1/event/${eventCode}`;
 
   try {
     const response = await fetch(nexusUrl, {
@@ -45,6 +47,7 @@ export default async function handler(req, res) {
 
     const data = await response.json();
     res.setHeader('Cache-Control', 's-maxage=10, stale-while-revalidate=20');
+    // Return full object — client reads data.matches
     return res.status(200).json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });
