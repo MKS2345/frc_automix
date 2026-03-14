@@ -65,6 +65,7 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
 
   const [activeEvents,    setActiveEvents]    = useState([]);
   const [eventMatchData,  setEventMatchData]  = useState({});
+  // streamUrls shape: { [eventKey]: { webcasts: [{url, type, label, raw}], activeIdx: number } }
   const [streamUrls,      setStreamUrls]      = useState({});
   const [currentStreamEvent, setCurrentStreamEvent] = useState(null);
   const [watchingMatchKey,   setWatchingMatchKey]   = useState(null);
@@ -297,29 +298,82 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   }, [evaluateMatches]);
 
   // ── stream URL builder ───────────────────────────────────────────────────────
-  const loadStreamUrl = useCallback((event) => {
-    if (!event?.webcasts?.length) return;
-    const wc   = event.webcasts[0];
-    const host = window.location.hostname;
-    let url    = '';
-
+  // Build embed URL for a single webcast object
+  const buildEmbedUrl = useCallback((wc, host) => {
     switch (wc.type) {
       case 'twitch':
-        url = `https://player.twitch.tv/?channel=${wc.channel}&parent=${host}&autoplay=true`;
-        break;
+        return `https://player.twitch.tv/?channel=${wc.channel}&parent=${host}&autoplay=true`;
       case 'youtube':
-        url = `https://www.youtube.com/embed/${wc.channel}?autoplay=1&rel=0`;
-        break;
+        return `https://www.youtube.com/embed/${wc.channel}?autoplay=1&rel=0`;
       case 'livestream':
-        url = `https://livestream.com/accounts/${wc.channel}/events/${wc.file}/player`;
-        break;
+        return `https://livestream.com/accounts/${wc.channel}/events/${wc.file}/player`;
       default:
-        url = wc.channel?.startsWith('http') ? wc.channel : '';
+        return wc.channel?.startsWith('http') ? wc.channel : '';
+    }
+  }, []);
+
+  // Try YouTube oEmbed (no API key needed) to check if a stream is currently live.
+  // Returns true if the video is a live stream, false otherwise.
+  const isYoutubeLive = async (videoId) => {
+    try {
+      const res = await fetch(
+          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+      );
+      if (!res.ok) return false;
+      const data = await res.json();
+      // oEmbed doesn't directly say "live" but live streams have no thumbnail_url
+      // or their title contains "LIVE" — use as a heuristic
+      const title = (data.title || '').toUpperCase();
+      return title.includes('LIVE') || title.includes('DAY') || !data.thumbnail_url;
+    } catch {
+      return false;
+    }
+  };
+
+  const loadStreamUrl = useCallback(async (event) => {
+    if (!event?.webcasts?.length) return;
+    const host = window.location.hostname;
+
+    // Build all webcasts into embed URLs
+    const allWebcasts = event.webcasts
+        .map((wc, i) => {
+          const url = buildEmbedUrl(wc, host);
+          if (!url) return null;
+          // Label: "Stream 1", "Stream 2" etc, or use type+channel hint
+          const label = event.webcasts.length > 1
+              ? `Stream ${i + 1} (${wc.type})`
+              : wc.type.charAt(0).toUpperCase() + wc.type.slice(1);
+          return { url, type: wc.type, label, raw: wc, index: i };
+        })
+        .filter(Boolean);
+
+    if (allWebcasts.length === 0) return;
+
+    // Default to last webcast (TBA lists streams chronologically; last = most recent day)
+    let activeIdx = allWebcasts.length - 1;
+
+    // Try to find a live YouTube stream — check from last to first
+    for (let i = allWebcasts.length - 1; i >= 0; i--) {
+      const wc = allWebcasts[i];
+      if (wc.type === 'youtube') {
+        const live = await isYoutubeLive(wc.raw.channel);
+        if (live) { activeIdx = i; break; }
+      }
     }
 
-    if (url) {
-      setStreamUrls(prev => ({ ...prev, [event.key]: { url, type: wc.type, raw: wc } }));
-    }
+    setStreamUrls(prev => ({
+      ...prev,
+      [event.key]: { webcasts: allWebcasts, activeIdx },
+    }));
+  }, [buildEmbedUrl]);
+
+  // Public: manually select a specific webcast index for an event
+  const setActiveWebcast = useCallback((eventKey, idx) => {
+    setStreamUrls(prev => {
+      const entry = prev[eventKey];
+      if (!entry) return prev;
+      return { ...prev, [eventKey]: { ...entry, activeIdx: idx } };
+    });
   }, []);
 
   // ── load active events ───────────────────────────────────────────────────────
@@ -380,6 +434,6 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
     activeEvents, eventMatchData, currentStreamEvent,
     streamUrls, notification, deferredSwitch,
     categorizedEvents, isWatchingMatch,
-    switchToEvent, acceptPendingSwitch, dismissNotification, pollMatches,
+    switchToEvent, acceptPendingSwitch, dismissNotification, pollMatches, setActiveWebcast,
   };
 }

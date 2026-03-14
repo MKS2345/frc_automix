@@ -1,15 +1,15 @@
 // src/components/StreamViewer.jsx
 
-export default function StreamViewer({ streamInfo, eventName, offsetSeconds, pendingDelay }) {
+export default function StreamViewer({ streamInfo, eventName, streamEntry, onSelectWebcast }) {
   if (!streamInfo) {
     return (
-      <div style={styles.empty}>
-        <div style={styles.emptyIcon}>📺</div>
-        <div style={styles.emptyTitle}>No Stream Selected</div>
-        <div style={styles.emptySub}>
-          Select an event from the sidebar, or add favorite teams to auto-switch.
+        <div style={styles.empty}>
+          <div style={styles.emptyIcon}>📺</div>
+          <div style={styles.emptyTitle}>No Stream Selected</div>
+          <div style={styles.emptySub}>
+            Select an event from the sidebar, or add favorite teams to auto-switch.
+          </div>
         </div>
-      </div>
     );
   }
 
@@ -18,43 +18,53 @@ export default function StreamViewer({ streamInfo, eventName, offsetSeconds, pen
   // If the URL doesn't look like an embeddable iframe URL
   if (!url || (!url.includes('youtube') && !url.includes('twitch') && !url.includes('livestream'))) {
     return (
-      <div style={styles.empty}>
-        <div style={styles.emptyIcon}>📡</div>
-        <div style={styles.emptyTitle}>{eventName}</div>
-        <div style={styles.emptySub}>
-          Stream type: <code style={styles.code}>{type || 'unknown'}</code>
+        <div style={styles.empty}>
+          <div style={styles.emptyIcon}>📡</div>
+          <div style={styles.emptyTitle}>{eventName}</div>
+          <div style={styles.emptySub}>
+            Stream type: <code style={styles.code}>{type || 'unknown'}</code>
+          </div>
+          {url && (
+              <a href={url} target="_blank" rel="noreferrer" style={styles.openLink}>
+                Open Stream ↗
+              </a>
+          )}
         </div>
-        {url && (
-          <a href={url} target="_blank" rel="noreferrer" style={styles.openLink}>
-            Open Stream ↗
-          </a>
-        )}
-      </div>
     );
   }
 
   return (
-    <div style={styles.wrapper}>
-      {pendingDelay > 0 && (
-        <div style={styles.delayOverlay}>
-          <div style={styles.delayBox}>
-            <div style={styles.delayIcon}>⏱</div>
-            <div style={styles.delayTitle}>Switching in…</div>
-            <div style={styles.delayCount}>{pendingDelay}s</div>
-            <div style={styles.delaySub}>Waiting for match to begin</div>
-          </div>
-        </div>
-      )}
-      <iframe
-        key={url}
-        src={url}
-        style={styles.iframe}
-        allowFullScreen
-        allow="autoplay; fullscreen"
-        title={`${eventName} stream`}
-        frameBorder="0"
-      />
-    </div>
+      <div style={styles.wrapper}>
+        {/* Multi-stream picker — shown when event has >1 webcasts */}
+        {streamEntry?.webcasts?.length > 1 && (
+            <div style={styles.streamPicker}>
+              <span style={styles.pickerLabel}>Streams:</span>
+              {streamEntry.webcasts.map((wc, i) => (
+                  <button
+                      key={i}
+                      style={{
+                        ...styles.pickerBtn,
+                        background: i === streamEntry.activeIdx ? '#1d4ed8' : 'transparent',
+                        borderColor: i === streamEntry.activeIdx ? '#2563eb' : '#1e3a5f',
+                        color: i === streamEntry.activeIdx ? '#fff' : '#94a3b8',
+                      }}
+                      onClick={() => onSelectWebcast?.(i)}
+                  >
+                    {wc.label}
+                  </button>
+              ))}
+            </div>
+        )}
+        <iframe
+            key={url}
+            src={url}
+            style={styles.iframe}
+            allowFullScreen
+            allow="autoplay; fullscreen"
+            title={`${eventName} stream`}
+            frameBorder="0"
+        />
+      </div>
   );
 }
 
@@ -159,5 +169,39 @@ const styles = {
   delaySub: {
     color: '#475569',
     fontSize: 12,
+  },
+  streamPicker: {
+    position: 'absolute',
+    top: 12,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    background: 'rgba(8, 13, 26, 0.9)',
+    border: '1px solid #1e3a5f',
+    borderRadius: 10,
+    padding: '6px 12px',
+    zIndex: 20,
+    backdropFilter: 'blur(8px)',
+  },
+  pickerLabel: {
+    color: '#475569',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    marginRight: 4,
+    fontFamily: "'Barlow Condensed', sans-serif",
+  },
+  pickerBtn: {
+    padding: '5px 12px',
+    border: '1px solid',
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    fontFamily: 'inherit',
   },
 };

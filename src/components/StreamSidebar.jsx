@@ -6,6 +6,7 @@ export default function StreamSidebar({
                                         currentStreamEvent,
                                         switchToEvent,
                                         streamUrls,
+                                        setActiveWebcast,
                                         eventMatchData,
                                         favTeams,
                                       }) {
@@ -71,7 +72,7 @@ export default function StreamSidebar({
                             <span style={styles.eventName}>
                         {event.short_name || event.name}
                       </span>
-                            {streamUrls[event.key] && (
+                            {streamUrls[event.key]?.webcasts?.length > 0 && (
                                 <span style={styles.liveBadge}>LIVE</span>
                             )}
                           </div>
