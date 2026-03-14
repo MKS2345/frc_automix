@@ -22,11 +22,11 @@ export default function StreamSidebar({
       const s = normalizeStatus(m.status);
       return s === 'onField' || s === 'inProgress';
     });
-    // Nexus teams are plain number strings like "1800", no frc prefix
+    // Nexus teams are plain number strings like "1800", null = empty playoff slot
     const teams = active.flatMap(m => [
       ...(m.redTeams || []),
       ...(m.blueTeams || []),
-    ]).map(t => parseInt(t.toString().replace(/frc/i, ''), 10));
+    ]).filter(t => t != null).map(t => parseInt(t.toString().replace(/frc/i, ''), 10)).filter(n => n > 0);
     return [...new Set(teams)];
   };
 

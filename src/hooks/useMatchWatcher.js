@@ -41,8 +41,9 @@ export function teamsInMatch(match) {
   const red  = match.redTeams  || [];
   const blue = match.blueTeams || [];
   return [...red, ...blue]
+      .filter(t => t != null)                          // Nexus uses null for empty playoff slots
       .map(t => parseInt(t.toString().replace(/frc/i, ''), 10))
-      .filter(n => !isNaN(n));
+      .filter(n => !isNaN(n) && n > 0);
 }
 
 function bestPriority(match, favTeams) {
@@ -232,12 +233,17 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
   }, [onMatchTimerFired, clearSwitchTimer]);
 
   // ── poll Nexus ───────────────────────────────────────────────────────────────
+  // Track events that have 404d so we stop polling them every 15s
+  const nexus404Cache = useRef(new Set());
+
   const pollMatches = useCallback(async () => {
     const { activeEvents: events } = stateRef.current;
     if (!events?.length) return;
 
     const updates = {};
     await Promise.allSettled(events.map(async (event) => {
+      // Skip events we know are not on Nexus
+      if (nexus404Cache.current.has(event.key)) return;
       try {
         const raw = await nexusGetMatches(event.key);
         // Nexus returns { eventKey, matches: [...], ... }
@@ -246,6 +252,12 @@ export function useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated }) {
         if (e.message === 'UNAUTHORIZED') {
           sessionStorage.removeItem('appPassword');
           window.location.reload();
+          return;
+        }
+        if (e.message?.includes('404')) {
+          // Event not on Nexus — stop polling it silently
+          nexus404Cache.current.add(event.key);
+          return;
         }
         console.warn(`[Nexus] ${event.key}:`, e.message);
       }

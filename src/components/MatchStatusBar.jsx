@@ -47,8 +47,8 @@ export default function MatchStatusBar({ eventMatchData, currentStreamEvent, fav
   const getTeams = (m) => {
     if (!m) return { red: [], blue: [] };
     return {
-      red:  (m.redTeams  || []).map(t => parseInt(t, 10)),
-      blue: (m.blueTeams || []).map(t => parseInt(t, 10)),
+      red:  (m.redTeams  || []).filter(t => t != null).map(t => parseInt(t, 10)).filter(n => n > 0),
+      blue: (m.blueTeams || []).filter(t => t != null).map(t => parseInt(t, 10)).filter(n => n > 0),
     };
   };
 
