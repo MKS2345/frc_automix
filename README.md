@@ -16,7 +16,6 @@ Nexus Webhook → /api/webhook → Firebase RTDB
 - **On-demand caching** — TBA data fetched only when needed, cached in Firebase
 - **Anonymous auth** — Firebase anon auth gates all RTDB reads; bots can't hit APIs
 - **YouTube Data API v3** — definitive live stream detection, no scraping
-
 ---
 
 ## Vercel Environment Variables
