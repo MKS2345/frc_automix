@@ -12,10 +12,11 @@ import { ensureAuth, setupPresence } from './firebase.js';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(
-    () => !!sessionStorage.getItem('appPassword')
+      () => !!sessionStorage.getItem('appPassword')
   );
   const [showSettings,    setShowSettings]    = useState(false);
   const [firebaseReady,   setFirebaseReady]   = useState(false);
+  const [firebaseError,   setFirebaseError]   = useState(null);
 
   // ── Persisted settings ──────────────────────────────────────────────────────
   const [favTeams,        setFavTeams]        = useLocalStorage('am-fav-teams',      []);
@@ -29,9 +30,12 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     ensureAuth()
-      .then(() => setupPresence())
-      .then(() => setFirebaseReady(true))
-      .catch(console.error);
+        .then(() => setupPresence())
+        .then(() => setFirebaseReady(true))
+        .catch((err) => {
+          console.error('[Firebase auth]', err);
+          setFirebaseError(err.message || 'Firebase auth failed');
+        });
   }, [isAuthenticated]);
 
   // ── Core hook ───────────────────────────────────────────────────────────────
@@ -63,132 +67,153 @@ export default function App() {
     return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
   }
 
+  if (firebaseError) {
+    return (
+        <div style={loadingStyle}>
+          <style>{globalCss}</style>
+          <div style={loadingInner}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
+            <div style={loadingText}>Firebase Auth Error</div>
+            <div style={{ color: '#ef4444', fontSize: 13, maxWidth: 400, lineHeight: 1.6, marginBottom: 20 }}>
+              {firebaseError}
+            </div>
+            <div style={{ color: '#374151', fontSize: 12, maxWidth: 400, lineHeight: 1.7 }}>
+              <strong style={{ color: '#64748b' }}>Fix checklist:</strong><br />
+              1. Firebase Console → Authentication → Sign-in method → <strong style={{ color: '#94a3b8' }}>Anonymous → Enable</strong><br />
+              2. Vercel → Settings → Env Vars → confirm all <code style={{ color: '#3b82f6' }}>VITE_FIREBASE_*</code> vars are set<br />
+              3. Redeploy after adding env vars
+            </div>
+          </div>
+        </div>
+    );
+  }
+
   if (!firebaseReady) {
     return (
-      <div style={loadingStyle}>
-        <style>{globalCss}</style>
-        <div style={loadingInner}>
-          <div style={loadingIcon}>⚡</div>
-          <div style={loadingText}>FRC Automix</div>
-          <div style={loadingBar}><div style={loadingFill} /></div>
-          <div style={loadingSub}>Connecting…</div>
+        <div style={loadingStyle}>
+          <style>{globalCss}</style>
+          <div style={loadingInner}>
+            <div style={loadingIcon}>⚡</div>
+            <div style={loadingText}>FRC Automix</div>
+            <div style={loadingBar}><div style={loadingFill} /></div>
+            <div style={loadingSub}>Connecting…</div>
+          </div>
         </div>
-      </div>
     );
   }
 
   const currentEvent = eventData[currentStreamEvent] || {};
 
   return (
-    <div style={S.root}>
-      <style>{globalCss}</style>
+      <div style={S.root}>
+        <style>{globalCss}</style>
 
-      {/* ── Header ── */}
-      <header style={S.header}>
-        {/* Logo */}
-        <div style={S.logo}>
-          <span style={S.logoMark}>⚡</span>
-          <span style={S.logoText}>FRC Automix</span>
-        </div>
-
-        {/* Status center */}
-        <div style={S.headerMid}>
-          {isWatchingMatch && (
-            <div style={S.chip('#14532d', '#22c55e', '#4ade80')}>
-              <span style={S.dot('#22c55e')} />
-              Watching — auto-switch locked
-            </div>
-          )}
-          {deferredSwitch && !isWatchingMatch && (
-            <div style={S.chip('#1e3a5f', '#2563eb', '#93c5fd')}>
-              <span style={S.dot('#3b82f6')} />
-              Switch queued after match
-            </div>
-          )}
-          {!isWatchingMatch && !deferredSwitch && favTeams.length > 0 && (
-            <div style={S.chip('#0d1526', '#1a2e4a', '#374151')}>
-              Monitoring {favTeams.length} team{favTeams.length !== 1 ? 's' : ''}
-            </div>
-          )}
-          {favTeams.length === 0 && (
-            <button style={S.noTeamsBtn} onClick={() => setShowSettings(true)}>
-              + Add favorite teams to get started
-            </button>
-          )}
-        </div>
-
-        {/* Right side */}
-        <div style={S.headerRight}>
-          {/* Live viewers */}
-          {activeSessions > 0 && (
-            <div style={S.viewerCount}>
-              <span style={S.dot('#22c55e')} />
-              <span style={S.viewerNum}>{activeSessions}</span>
-              <span style={S.viewerLabel}>watching</span>
-            </div>
-          )}
-
-          {/* Offset display */}
-          <div style={S.offsetPill}>
-            <span style={S.offsetLabel}>+{offsetSeconds}s</span>
+        {/* ── Header ── */}
+        <header style={S.header}>
+          {/* Logo */}
+          <div style={S.logo}>
+            <span style={S.logoMark}>⚡</span>
+            <span style={S.logoText}>FRC Automix</span>
           </div>
 
-          <button style={S.settingsBtn} onClick={() => setShowSettings(true)}>
-            ⚙ Settings
-          </button>
-        </div>
-      </header>
+          {/* Status center */}
+          <div style={S.headerMid}>
+            {isWatchingMatch && (
+                <div style={S.chip('#14532d', '#22c55e', '#4ade80')}>
+                  <span style={S.dot('#22c55e')} />
+                  Watching — auto-switch locked
+                </div>
+            )}
+            {deferredSwitch && !isWatchingMatch && (
+                <div style={S.chip('#1e3a5f', '#2563eb', '#93c5fd')}>
+                  <span style={S.dot('#3b82f6')} />
+                  Switch queued after match
+                </div>
+            )}
+            {!isWatchingMatch && !deferredSwitch && favTeams.length > 0 && (
+                <div style={S.chip('#0d1526', '#1a2e4a', '#374151')}>
+                  Monitoring {favTeams.length} team{favTeams.length !== 1 ? 's' : ''}
+                </div>
+            )}
+            {favTeams.length === 0 && (
+                <button style={S.noTeamsBtn} onClick={() => setShowSettings(true)}>
+                  + Add favorite teams to get started
+                </button>
+            )}
+          </div>
 
-      {/* ── Body ── */}
-      <div style={S.body}>
-        <StreamSidebar
-          categorizedEvents={categorizedEvents}
-          currentStreamEvent={currentStreamEvent}
-          switchToEvent={switchToEvent}
-          eventData={eventData}
-          teamData={teamData}
-          favTeams={favTeams}
+          {/* Right side */}
+          <div style={S.headerRight}>
+            {/* Live viewers */}
+            {activeSessions > 0 && (
+                <div style={S.viewerCount}>
+                  <span style={S.dot('#22c55e')} />
+                  <span style={S.viewerNum}>{activeSessions}</span>
+                  <span style={S.viewerLabel}>watching</span>
+                </div>
+            )}
+
+            {/* Offset display */}
+            <div style={S.offsetPill}>
+              <span style={S.offsetLabel}>+{offsetSeconds}s</span>
+            </div>
+
+            <button style={S.settingsBtn} onClick={() => setShowSettings(true)}>
+              ⚙ Settings
+            </button>
+          </div>
+        </header>
+
+        {/* ── Body ── */}
+        <div style={S.body}>
+          <StreamSidebar
+              categorizedEvents={categorizedEvents}
+              currentStreamEvent={currentStreamEvent}
+              switchToEvent={switchToEvent}
+              eventData={eventData}
+              teamData={teamData}
+              favTeams={favTeams}
+          />
+
+          <div style={S.main}>
+            <MatchStatusBar
+                currentStreamEvent={currentStreamEvent}
+                eventData={eventData}
+                favTeams={favTeams}
+            />
+            <StreamViewer
+                currentStreamEvent={currentStreamEvent}
+                eventData={eventData}
+                onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
+                onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
+            />
+          </div>
+        </div>
+
+        {/* ── Settings panel ── */}
+        {showSettings && (
+            <SettingsPanel
+                favTeams={favTeams}             setFavTeams={setFavTeams}
+                offsetSeconds={offsetSeconds}   setOffsetSeconds={setOffsetSeconds}
+                endOffsetSeconds={endOffsetSeconds} setEndOffsetSeconds={setEndOffsetSeconds}
+                forceSwitch={forceSwitch}       setForceSwitch={setForceSwitch}
+                afterMatchEnds={afterMatchEnds} setAfterMatchEnds={setAfterMatchEnds}
+                homeEvent={homeEvent}           setHomeEvent={setHomeEvent}
+                teamData={teamData}
+                eventData={eventData}
+                onClose={() => setShowSettings(false)}
+            />
+        )}
+
+        {/* ── Match notification ── */}
+        <MatchNotification
+            notification={notification}
+            teamData={teamData}
+            eventData={eventData}
+            onAccept={acceptPendingSwitch}
+            onDismiss={dismissNotification}
         />
-
-        <div style={S.main}>
-          <MatchStatusBar
-            currentStreamEvent={currentStreamEvent}
-            eventData={eventData}
-            favTeams={favTeams}
-          />
-          <StreamViewer
-            currentStreamEvent={currentStreamEvent}
-            eventData={eventData}
-            onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
-            onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
-          />
-        </div>
       </div>
-
-      {/* ── Settings panel ── */}
-      {showSettings && (
-        <SettingsPanel
-          favTeams={favTeams}             setFavTeams={setFavTeams}
-          offsetSeconds={offsetSeconds}   setOffsetSeconds={setOffsetSeconds}
-          endOffsetSeconds={endOffsetSeconds} setEndOffsetSeconds={setEndOffsetSeconds}
-          forceSwitch={forceSwitch}       setForceSwitch={setForceSwitch}
-          afterMatchEnds={afterMatchEnds} setAfterMatchEnds={setAfterMatchEnds}
-          homeEvent={homeEvent}           setHomeEvent={setHomeEvent}
-          teamData={teamData}
-          eventData={eventData}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
-
-      {/* ── Match notification ── */}
-      <MatchNotification
-        notification={notification}
-        teamData={teamData}
-        eventData={eventData}
-        onAccept={acceptPendingSwitch}
-        onDismiss={dismissNotification}
-      />
-    </div>
   );
 }
 

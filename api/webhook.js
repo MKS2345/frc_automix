@@ -8,7 +8,11 @@
 import { getDb } from './_firebase-admin.js';
 
 export default async function handler(req, res) {
-  // Nexus sends POST
+  // Nexus sends a GET first to verify the endpoint is reachable, then POSTs events
+  if (req.method === 'GET') {
+    return res.status(200).json({ ok: true, service: 'frc-automix-webhook' });
+  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).end();
 
   // Verify Nexus-Token — this is the only auth needed for the webhook
