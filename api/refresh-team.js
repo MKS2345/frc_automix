@@ -25,8 +25,12 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-app-password, x-firebase-token');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const authed = await requireAuth(req, res);
-  if (!authed) return;
+  const internalSecret = process.env.NEXUS_WEBHOOK_TOKEN;
+  const isInternalCall = internalSecret && req.headers['x-internal-secret'] === internalSecret;
+  if (!isInternalCall) {
+    const authed = await requireAuth(req, res);
+    if (!authed) return;
+  }
 
   const { teamNum } = req.body || req.query || {};
   if (!teamNum) return res.status(400).json({ error: 'Missing teamNum' });
@@ -57,7 +61,7 @@ export default async function handler(req, res) {
     const todayMs = today.getTime();
 
     const sortedEvents = (teamEvents || []).sort((a, b) =>
-      new Date(a.start_date) - new Date(b.start_date)
+        new Date(a.start_date) - new Date(b.start_date)
     );
 
     // Current = started and not ended yet
@@ -69,8 +73,8 @@ export default async function handler(req, res) {
 
     // Next upcoming if not currently at one
     const nextEvent = !currentEvent
-      ? sortedEvents.find(e => new Date(e.start_date).getTime() > todayMs)
-      : null;
+        ? sortedEvents.find(e => new Date(e.start_date).getTime() > todayMs)
+        : null;
 
     const relevantEvent = currentEvent || nextEvent;
 

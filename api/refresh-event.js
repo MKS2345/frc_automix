@@ -28,8 +28,8 @@ async function checkYoutubeLive(videoIds) {
   try {
     const ids = videoIds.join(',');
     const res = await fetch(
-      `https://www.googleapis.com/youtube/v3/videos` +
-      `?part=snippet,liveStreamingDetails&id=${ids}&key=${key}`
+        `https://www.googleapis.com/youtube/v3/videos` +
+        `?part=snippet,liveStreamingDetails&id=${ids}&key=${key}`
     );
     if (!res.ok) return {};
     const data = await res.json();
@@ -66,8 +66,14 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-app-password, x-firebase-token');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const authed = await requireAuth(req, res);
-  if (!authed) return;
+  // Accept either: normal user auth (app password + Firebase token)
+  // OR internal server-to-server call from webhook (x-internal-secret)
+  const internalSecret = process.env.NEXUS_WEBHOOK_TOKEN;
+  const isInternalCall = internalSecret && req.headers['x-internal-secret'] === internalSecret;
+  if (!isInternalCall) {
+    const authed = await requireAuth(req, res);
+    if (!authed) return;
+  }
 
   const { eventKey, force } = req.body || req.query || {};
   if (!eventKey) return res.status(400).json({ error: 'Missing eventKey' });
@@ -111,15 +117,15 @@ export default async function handler(req, res) {
       videoId: wc.type === 'youtube' ? wc.channel : null,
       channel: wc.channel,
       label: webcasts.length > 1
-        ? `Stream ${i + 1} (${wc.type})`
-        : wc.type.charAt(0).toUpperCase() + wc.type.slice(1),
+          ? `Stream ${i + 1} (${wc.type})`
+          : wc.type.charAt(0).toUpperCase() + wc.type.slice(1),
       index: i,
     })).filter(s => s.url);
 
     // Run YouTube live detection on all YouTube streams in one API call
     const youtubeIds = streams
-      .filter(s => s.type === 'youtube' && s.videoId)
-      .map(s => s.videoId);
+        .filter(s => s.type === 'youtube' && s.videoId)
+        .map(s => s.videoId);
 
     const liveStatus = await checkYoutubeLive(youtubeIds);
 
