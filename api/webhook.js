@@ -7,7 +7,28 @@
 
 import { getDb } from './_firebase-admin.js';
 
+// Tell Vercel to parse the request body automatically
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '1mb',
+    },
+  },
+};
+
 export default async function handler(req, res) {
+  // Manual body parse fallback — in case bodyParser config isn't picked up
+  if (req.method === 'POST' && !req.body) {
+    try {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      req.body = raw ? JSON.parse(raw) : {};
+    } catch {
+      req.body = {};
+    }
+  }
+
   // Nexus sends a GET first to verify the endpoint is reachable, then POSTs events
   if (req.method === 'GET') {
     return res.status(200).json({ ok: true, service: 'frc-automix-webhook' });
@@ -27,13 +48,19 @@ export default async function handler(req, res) {
   }
 
   const body = req.body;
+
+  // Debug log — visible in Vercel function logs
+  console.log('[webhook] method:', req.method);
+  console.log('[webhook] headers:', JSON.stringify(req.headers));
+  console.log('[webhook] body:', JSON.stringify(body));
+
   if (!body) return res.status(400).json({ error: 'No body' });
 
   // Nexus sends either a full event payload or a single-match update
   // Full event: { eventKey, matches: [...], dataAsOfTime }
   // Single match: { eventKey, match: {...}, dataAsOfTime }
   const eventKey = body.eventKey;
-  if (!eventKey) return res.status(400).json({ error: 'No eventKey' });
+  if (!eventKey) return res.status(400).json({ error: 'No eventKey', receivedBody: JSON.stringify(body).slice(0, 200) });
 
   const allMatches = body.matches
       ? (Array.isArray(body.matches) ? body.matches : [])
