@@ -28,18 +28,23 @@ export function normalizeStatus(raw) {
   if (s === 'ondeck')                                     return 'onDeck';
   if (s === 'nowqueuing' || s === 'queuing')              return 'queuing';
   if (s === 'complete' || s === 'done' || s === 'posted') return 'complete';
+  if (s === 'idle')                                       return 'idle';
   return 'unknown';
 }
 
+function isActiveStatus(status) {
+  return status === 'onField' || status === 'inProgress';
+}
+
 export function useFirebase({
-  favTeams,
-  offsetSeconds,
-  endOffsetSeconds,
-  forceSwitch,
-  afterMatchEnds,
-  homeEvent,
-  isAuthenticated,
-}) {
+                              favTeams,
+                              offsetSeconds,
+                              endOffsetSeconds,
+                              forceSwitch,
+                              afterMatchEnds,
+                              homeEvent,
+                              isAuthenticated,
+                            }) {
   // ── State ──────────────────────────────────────────────────────────────────
   const [teamData,    setTeamData]    = useState({}); // { [teamNum]: Firebase /teams/{num} }
   const [eventData,   setEventData]   = useState({}); // { [eventKey]: Firebase /events/{key} }
@@ -115,7 +120,7 @@ export function useFirebase({
     if (policy === 'random') {
       // Find all events where fav teams are registered
       const eventsWithFavs = [...new Set(
-        fav.map(n => td[n.toString()]?.currentEvent).filter(Boolean)
+          fav.map(n => td[n.toString()]?.currentEvent).filter(Boolean)
       )];
       if (eventsWithFavs.length > 1) {
         const others = eventsWithFavs.filter(e => e !== cur);
@@ -142,7 +147,7 @@ export function useFirebase({
     if (!fav?.length) return;
 
     const status = normalizeStatus(updatedData?.status);
-    const isActive = status === 'onField' || status === 'inProgress';
+    const isActive = isActiveStatus(status);
     const eventKey = updatedData?.currentEvent;
     const matchLabel = updatedData?.match?.label;
     const teamIdx  = fav.indexOf(parseInt(updatedTeamNum, 10));
@@ -161,7 +166,7 @@ export function useFirebase({
         const higherNum = fav[i].toString();
         const higherData = td[higherNum];
         const higherStatus = normalizeStatus(higherData?.status);
-        if ((higherStatus === 'onField' || higherStatus === 'inProgress')
+        if (isActiveStatus(higherStatus)
             && higherData?.currentEvent) {
           // Higher priority team already handled — skip this one
           return;
@@ -187,7 +192,7 @@ export function useFirebase({
           const higherNum  = f[i].toString();
           const higherData = stateRef.current.teamData[higherNum];
           const hs = normalizeStatus(higherData?.status);
-          if ((hs === 'onField' || hs === 'inProgress') && higherData?.currentEvent) {
+          if (isActiveStatus(hs) && higherData?.currentEvent) {
             return; // Higher priority team active — their timer handles it
           }
         }
@@ -208,7 +213,7 @@ export function useFirebase({
           const watchingTeamIdx = f.findIndex(n => {
             const nd = stateRef.current.teamData[n.toString()];
             return nd?.currentEvent === ce &&
-              (normalizeStatus(nd?.status) === 'onField' || normalizeStatus(nd?.status) === 'inProgress');
+                isActiveStatus(normalizeStatus(nd?.status));
           });
           const isHigherPriority = watchingTeamIdx === -1 || teamIdx < watchingTeamIdx;
 
@@ -392,7 +397,7 @@ export function useFirebase({
       seen.add(ek);
 
       const status = normalizeStatus(data.status);
-      const isActive = status === 'onField' || status === 'inProgress';
+      const isActive = isActiveStatus(status);
       if (isActive) withFavOnField.push(ek);
       else withFavAtEvent.push(ek);
     }

@@ -2,7 +2,7 @@ import { getDb } from './_firebase-admin.js';
 
 export const config = {
   api: {
-    bodyParser: false, // handle manually so we can log raw bytes
+    bodyParser: false,
   },
 };
 
@@ -17,31 +17,17 @@ async function getRawBody(req) {
 }
 
 export default async function handler(req, res) {
-  const db  = getDb();
-  const ts  = Date.now();
-  const key = `debug/${ts}`;
+  const db = getDb();
 
-  // ── Log absolutely everything to Firebase immediately ─────────────────────
-  const entry = {
-    ts,
-    method:  req.method,
-    url:     req.url,
-    headers: req.headers,
-    rawBody: null,
-    parsedBody: null,
-    error: null,
-  };
+  const entry = { parsedBody: null, rawBody: null };
 
   try {
     const raw = await getRawBody(req);
     entry.rawBody = raw;
     entry.parsedBody = raw ? JSON.parse(raw) : null;
   } catch (e) {
-    entry.error = `body parse failed: ${e.message}`;
+    console.error('[webhook] body parse failed:', e.message);
   }
-
-  // Write log first — before any other logic — so we always capture it
-  await db.ref(key).set(entry).catch(() => {});
 
   // ── GET: verification ping from Nexus ─────────────────────────────────────
   if (req.method === 'GET') {
@@ -97,6 +83,32 @@ export default async function handler(req, res) {
   const onDeckMatch = latestMatch(onDeckMatches);
 
   const writes = [];
+
+  // ── Clear previous match teams that are no longer on field ───────────────
+  // Read the current event data to find who was in the last match,
+  // then mark any team NOT in the new match as idle.
+  if (currentMatch) {
+    try {
+      const prevSnap = await db.ref(`events/${eventKey}/currentMatch`).get();
+      const prev = prevSnap.val();
+      if (prev) {
+        const prevTeams = [prev.r1, prev.r2, prev.r3, prev.b1, prev.b2, prev.b3]
+            .filter(t => t && t !== 'null');
+        const newTeams = [
+          ...(currentMatch.redTeams  || []),
+          ...(currentMatch.blueTeams || []),
+        ].map(t => t?.toString().replace(/frc/i, '').trim()).filter(Boolean);
+
+        for (const t of prevTeams) {
+          const teamNum = t.toString().replace(/frc/i, '').trim();
+          if (!teamNum || newTeams.includes(teamNum)) continue;
+          writes.push(
+              db.ref(`teams/${teamNum}`).update({ status: 'idle', updatedAt: now })
+          );
+        }
+      }
+    } catch {}
+  }
 
   const eventUpdate = {
     nexusActive: true,
@@ -177,7 +189,6 @@ export default async function handler(req, res) {
   } catch {}
 
   await Promise.allSettled(writes);
-  await db.ref(`${key}/result`).set('ok').catch(() => {});
   return res.status(200).json({ ok: true, event: eventKey });
 }
 
