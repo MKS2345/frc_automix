@@ -1,234 +1,211 @@
-import { normalizeStatus } from '../hooks/useMatchWatcher';
 // src/components/StreamSidebar.jsx
+import { normalizeStatus } from '../hooks/useFirebase.js';
 
 export default function StreamSidebar({
-                                        categorizedEvents,
-                                        currentStreamEvent,
-                                        switchToEvent,
-                                        streamUrls,
-                                        setActiveWebcast,
-                                        eventMatchData,
-                                        favTeams,
-                                      }) {
-  const { withFavPlaying, withFavAtEvent, others } = categorizedEvents;
-  const allGroups = [
-    { label: 'Fav Teams Playing Now', events: withFavPlaying, accent: '#22c55e' },
-    { label: 'Fav Teams at Event', events: withFavAtEvent, accent: '#2563eb' },
-    { label: 'Other Events', events: others, accent: '#475569' },
+  categorizedEvents,
+  currentStreamEvent,
+  switchToEvent,
+  eventData,
+  teamData,
+  favTeams,
+}) {
+  const { withFavOnField, withFavAtEvent } = categorizedEvents;
+
+  // All known event keys in priority order
+  const allKnown = [
+    ...withFavOnField,
+    ...withFavAtEvent.filter(e => !withFavOnField.includes(e)),
   ];
 
-  const getOnFieldTeams = (eventKey) => {
-    const matches = eventMatchData[eventKey] || [];
-    const active = matches.filter(m => {
-      const s = normalizeStatus(m.status);
-      return s === 'onField' || s === 'inProgress';
+  // Get fav teams currently on field at an event
+  const getFavTeamsOnField = (eventKey) => {
+    return favTeams.filter(n => {
+      const d = teamData[n.toString()];
+      const s = normalizeStatus(d?.status);
+      return d?.currentEvent === eventKey && (s === 'onField' || s === 'inProgress');
     });
-    // Nexus teams are plain number strings like "1800", null = empty playoff slot
-    const teams = active.flatMap(m => [
-      ...(m.redTeams || []),
-      ...(m.blueTeams || []),
-    ]).filter(t => t != null).map(t => parseInt(t.toString().replace(/frc/i, ''), 10)).filter(n => n > 0);
-    return [...new Set(teams)];
   };
 
+  // Get all fav teams at an event (regardless of status)
+  const getFavTeamsAtEvent = (eventKey) => {
+    return favTeams.filter(n => teamData[n.toString()]?.currentEvent === eventKey);
+  };
+
+  const groups = [
+    {
+      label: 'Playing Now',
+      eventKeys: withFavOnField,
+      accent: '#22c55e',
+    },
+    {
+      label: 'At Event',
+      eventKeys: withFavAtEvent.filter(e => !withFavOnField.includes(e)),
+      accent: '#2563eb',
+    },
+  ];
+
   return (
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarHeader}>
-          <span style={styles.sidebarTitle}>Live Events</span>
-          <span style={styles.eventCount}>
-          {withFavPlaying.length + withFavAtEvent.length + others.length} active
-        </span>
-        </div>
-
-        <div style={styles.groupList}>
-          {allGroups.map(({ label, events, accent }) => {
-            if (events.length === 0) return null;
-            return (
-                <div key={label} style={styles.group}>
-                  <div style={styles.groupLabel}>
-                    <span style={{ ...styles.groupDot, background: accent }} />
-                    {label}
-                  </div>
-                  {events.map(event => {
-                    const isActive = currentStreamEvent === event.key;
-                    const onFieldTeams = getOnFieldTeams(event.key);
-                    const favOnField = onFieldTeams.filter(t => favTeams.includes(t));
-
-                    return (
-                        <button
-                            key={event.key}
-                            style={{
-                              ...styles.eventBtn,
-                              borderColor: isActive ? accent : '#1e3a5f',
-                              background: isActive
-                                  ? `linear-gradient(135deg, ${accent}22, ${accent}11)`
-                                  : '#111827',
-                              boxShadow: isActive ? `0 0 16px ${accent}33` : 'none',
-                            }}
-                            onClick={() => switchToEvent(event.key)}
-                        >
-                          <div style={styles.eventBtnTop}>
-                            <span style={{ ...styles.activeDot, background: isActive ? accent : '#1e3a5f' }} />
-                            <span style={styles.eventName}>
-                        {event.short_name || event.name}
-                      </span>
-                            {streamUrls[event.key]?.webcasts?.length > 0 && (
-                                <span style={styles.liveBadge}>LIVE</span>
-                            )}
-                          </div>
-                          <div style={styles.eventBtnSub}>
-                            <span style={styles.eventKey}>{event.key}</span>
-                            {favOnField.length > 0 && (
-                                <span style={styles.favTeams}>
-                          {favOnField.map(t => `#${t}`).join(' ')}
-                        </span>
-                            )}
-                          </div>
-                        </button>
-                    );
-                  })}
-                </div>
-            );
-          })}
-
-          {withFavPlaying.length + withFavAtEvent.length + others.length === 0 && (
-              <div style={styles.noEvents}>
-                <div style={styles.noEventsIcon}>📡</div>
-                <div style={styles.noEventsText}>No active events found</div>
-                <div style={styles.noEventsSub}>Events refresh every 5 minutes</div>
-              </div>
-          )}
-        </div>
+    <div style={S.sidebar}>
+      <div style={S.header}>
+        <span style={S.headerTitle}>Events</span>
+        <span style={S.headerCount}>{allKnown.length} tracked</span>
       </div>
+
+      <div style={S.list}>
+        {groups.map(({ label, eventKeys, accent }) => {
+          if (!eventKeys.length) return null;
+          return (
+            <div key={label} style={S.group}>
+              <div style={S.groupLabel}>
+                <span style={{ ...S.groupDot, background: accent }} />
+                {label}
+              </div>
+              {eventKeys.map(ek => {
+                const edata      = eventData[ek] || {};
+                const isActive   = currentStreamEvent === ek;
+                const onField    = getFavTeamsOnField(ek);
+                const atEvent    = getFavTeamsAtEvent(ek);
+                const hasStream  = !!(edata.activeStream || edata.streams?.length);
+                const displayName = edata.shortName || edata.name || ek;
+
+                return (
+                  <button
+                    key={ek}
+                    onClick={() => switchToEvent(ek)}
+                    style={{
+                      ...S.eventBtn,
+                      borderColor: isActive ? accent : '#1a2e4a',
+                      background: isActive
+                        ? `linear-gradient(135deg, ${accent}18, ${accent}08)`
+                        : '#0d1526',
+                      boxShadow: isActive ? `0 0 20px ${accent}22` : 'none',
+                    }}
+                  >
+                    <div style={S.eventBtnTop}>
+                      <span style={{ ...S.activeDot, background: isActive ? accent : '#1a2e4a' }} />
+                      <span style={S.eventName}>{displayName}</span>
+                      {hasStream && <span style={S.livePill}>LIVE</span>}
+                    </div>
+
+                    <div style={S.eventBtnMid}>
+                      <span style={S.eventKey}>{ek}</span>
+                    </div>
+
+                    {/* Fav teams on field */}
+                    {onField.length > 0 && (
+                      <div style={S.teamChips}>
+                        {onField.map(n => (
+                          <span key={n} style={{ ...S.teamChip, background: '#166534', borderColor: '#22c55e', color: '#4ade80' }}>
+                            ★ {n}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Fav teams at event but not on field */}
+                    {onField.length === 0 && atEvent.length > 0 && (
+                      <div style={S.teamChips}>
+                        {atEvent.slice(0, 4).map(n => (
+                          <span key={n} style={S.teamChip}>
+                            {n}
+                          </span>
+                        ))}
+                        {atEvent.length > 4 && (
+                          <span style={{ ...S.teamChip, color: '#374151' }}>
+                            +{atEvent.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {allKnown.length === 0 && (
+          <div style={S.empty}>
+            <div style={S.emptyIcon}>📡</div>
+            <div style={S.emptyTitle}>No events tracked</div>
+            <div style={S.emptySub}>Add favorite teams in Settings</div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
-const styles = {
+const S = {
   sidebar: {
-    width: 240,
+    width: 236,
     flexShrink: 0,
-    background: '#080d1a',
-    borderRight: '1px solid #1e3a5f',
+    background: '#070b14',
+    borderRight: '1px solid #1a2e4a',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
   },
-  sidebarHeader: {
-    padding: '16px 16px 12px',
-    borderBottom: '1px solid #1e3a5f',
+  header: {
+    padding: '14px 16px 12px',
+    borderBottom: '1px solid #1a2e4a',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  sidebarTitle: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.12em',
-    textTransform: 'uppercase',
-    fontFamily: "'Barlow Condensed', sans-serif",
-  },
-  eventCount: {
-    color: '#475569',
-    fontSize: 11,
-    background: '#111827',
-    padding: '2px 8px',
-    borderRadius: 10,
-    border: '1px solid #1e3a5f',
-  },
-  groupList: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '8px 0',
-  },
-  group: {
-    marginBottom: 8,
-  },
-  groupLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '8px 16px 6px',
-    color: '#475569',
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: '0.1em',
-    textTransform: 'uppercase',
-    fontFamily: "'Barlow Condensed', sans-serif",
-  },
-  groupDot: {
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
     flexShrink: 0,
   },
+  headerTitle: {
+    color: '#64748b', fontSize: 11, fontWeight: 700,
+    letterSpacing: '0.12em', textTransform: 'uppercase',
+    fontFamily: "'Barlow Condensed', sans-serif",
+  },
+  headerCount: {
+    color: '#374151', fontSize: 11,
+    background: '#0d1526', padding: '2px 8px',
+    borderRadius: 10, border: '1px solid #1a2e4a',
+  },
+  list: { flex: 1, overflowY: 'auto', padding: '6px 0' },
+  group: { marginBottom: 4 },
+  groupLabel: {
+    display: 'flex', alignItems: 'center', gap: 7,
+    padding: '8px 16px 5px',
+    color: '#374151', fontSize: 10, fontWeight: 700,
+    letterSpacing: '0.1em', textTransform: 'uppercase',
+    fontFamily: "'Barlow Condensed', sans-serif",
+  },
+  groupDot: { width: 6, height: 6, borderRadius: '50%', flexShrink: 0 },
   eventBtn: {
-    display: 'block',
-    width: '100%',
-    padding: '10px 16px',
-    border: '1px solid',
-    borderLeft: 'none',
-    borderRight: 'none',
+    display: 'block', width: '100%',
+    padding: '10px 14px 10px 16px',
+    border: '1px solid', borderLeft: 'none', borderRight: 'none',
+    cursor: 'pointer', textAlign: 'left',
+    transition: 'all 0.15s', marginBottom: 1,
     borderRadius: 0,
-    cursor: 'pointer',
-    textAlign: 'left',
-    transition: 'all 0.15s',
-    marginBottom: 2,
   },
   eventBtnTop: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 3,
+    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3,
   },
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    flexShrink: 0,
-    transition: 'background 0.2s',
-  },
+  activeDot: { width: 6, height: 6, borderRadius: '50%', flexShrink: 0, transition: 'background 0.2s' },
   eventName: {
-    color: '#e2e8f0',
-    fontSize: 13,
-    fontWeight: 600,
-    flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    color: '#e2e8f0', fontSize: 13, fontWeight: 600,
+    flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  liveBadge: {
-    background: '#dc2626',
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: 800,
-    padding: '1px 5px',
-    borderRadius: 3,
-    letterSpacing: '0.08em',
-    animation: 'pulse 2s infinite',
+  livePill: {
+    background: '#dc2626', color: '#fff', fontSize: 9, fontWeight: 800,
+    padding: '1px 5px', borderRadius: 3, letterSpacing: '0.08em',
+    animation: 'pulse 2s infinite', flexShrink: 0,
   },
-  eventBtnSub: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    paddingLeft: 14,
-  },
-  eventKey: {
-    color: '#475569',
-    fontSize: 11,
-    fontFamily: 'monospace',
-  },
-  favTeams: {
-    color: '#60a5fa',
-    fontSize: 11,
-    fontWeight: 700,
+  eventBtnMid: { paddingLeft: 14, marginBottom: 4 },
+  eventKey:    { color: '#374151', fontSize: 11, fontFamily: 'monospace' },
+  teamChips:   { display: 'flex', gap: 4, paddingLeft: 14, flexWrap: 'wrap' },
+  teamChip: {
+    background: '#0d1526', border: '1px solid #1a2e4a',
+    color: '#475569', borderRadius: 4,
+    padding: '2px 7px', fontSize: 11, fontWeight: 700,
     fontFamily: "'Barlow Condensed', sans-serif",
   },
-  noEvents: {
-    padding: '40px 20px',
-    textAlign: 'center',
-  },
-  noEventsIcon: { fontSize: 32, marginBottom: 12, opacity: 0.4 },
-  noEventsText: { color: '#475569', fontSize: 13, fontWeight: 600 },
-  noEventsSub: { color: '#374151', fontSize: 11, marginTop: 4 },
+  empty: { padding: '40px 20px', textAlign: 'center' },
+  emptyIcon:  { fontSize: 28, marginBottom: 10, opacity: 0.3 },
+  emptyTitle: { color: '#374151', fontSize: 13, fontWeight: 600 },
+  emptySub:   { color: '#1e3a5f', fontSize: 11, marginTop: 4 },
 };

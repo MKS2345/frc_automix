@@ -1,32 +1,36 @@
 // src/utils/api.js
+import { getIdToken } from '../firebase.js';
 
-const getPassword = () => sessionStorage.getItem('appPassword') || '';
-
-const headers = () => ({
-  'Content-Type': 'application/json',
-  'x-app-password': getPassword(),
-});
-
-// TBA proxy: path is anything after /api/v3/
-export async function tbaGet(path) {
-  const encoded = encodeURIComponent(path);
-  const res = await fetch(`/api/tba?path=${encoded}`, { headers: headers() });
-  if (res.status === 401) throw new Error('UNAUTHORIZED');
-  if (!res.ok) throw new Error(`TBA error ${res.status}`);
-  return res.json();
+async function headers() {
+  const token = await getIdToken().catch(() => '');
+  return {
+    'Content-Type': 'application/json',
+    'x-app-password': sessionStorage.getItem('appPassword') || '',
+    'x-firebase-token': token,
+  };
 }
 
-// Nexus proxy: get match queue for an event
-export async function nexusGetMatches(eventCode) {
-  const res = await fetch(`/api/nexus?eventCode=${encodeURIComponent(eventCode)}`, {
-    headers: headers(),
+export async function apiPost(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: await headers(),
+    body: JSON.stringify(body),
   });
   if (res.status === 401) throw new Error('UNAUTHORIZED');
-  if (!res.ok) throw new Error(`Nexus error ${res.status}`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }
 
-// Auth check
+export async function apiGet(path) {
+  const h = await headers();
+  delete h['Content-Type'];
+  const res = await fetch(path, { headers: h });
+  if (res.status === 401) throw new Error('UNAUTHORIZED');
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// Check app password (before Firebase auth is set up)
 export async function checkPassword(password) {
   const res = await fetch('/api/auth', {
     method: 'POST',
@@ -37,45 +41,16 @@ export async function checkPassword(password) {
   return data.ok === true;
 }
 
-// Get current FRC year
+// Trigger on-demand team metadata refresh
+export async function refreshTeam(teamNum) {
+  return apiPost('/api/refresh-team', { teamNum });
+}
+
+// Trigger on-demand event stream refresh
+export async function refreshEvent(eventKey, force = false) {
+  return apiPost('/api/refresh-event', { eventKey, force });
+}
+
 export function getCurrentYear() {
-  const now = new Date();
-  // FRC season: season runs Jan-Apr, kickoff in Jan
-  return now.getFullYear();
-}
-
-// Get all current/ongoing events for a given year
-export async function getCurrentEvents(year) {
-  const events = await tbaGet(`events/${year}`);
-  const now = Date.now();
-  return events.filter(e => {
-    const start = new Date(e.start_date).getTime();
-    const end = new Date(e.end_date).getTime() + 86400000; // include end day
-    return start <= now && end >= now;
-  });
-}
-
-// Get team info
-export async function getTeamInfo(teamNumber) {
-  return tbaGet(`team/frc${teamNumber}`);
-}
-
-// Get events for a team this year
-export async function getTeamEvents(teamNumber, year) {
-  return tbaGet(`team/frc${teamNumber}/events/${year}`);
-}
-
-// Get matches for an event
-export async function getEventMatches(eventKey) {
-  return tbaGet(`event/${eventKey}/matches`);
-}
-
-// Get team name from TBA
-export async function getTeamName(teamNumber) {
-  try {
-    const info = await tbaGet(`team/frc${teamNumber}/simple`);
-    return info.nickname || info.team_number?.toString() || teamNumber.toString();
-  } catch {
-    return teamNumber.toString();
-  }
+  return new Date().getFullYear();
 }

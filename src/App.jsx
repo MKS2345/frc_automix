@@ -1,169 +1,220 @@
 // src/App.jsx
-import { useState } from 'react';
-import LoginScreen from './components/LoginScreen';
-import SettingsPanel from './components/SettingsPanel';
-import StreamSidebar from './components/StreamSidebar';
-import StreamViewer from './components/StreamViewer';
-import MatchStatusBar from './components/MatchStatusBar';
-import MatchNotification from './components/MatchNotification';
-import { useMatchWatcher } from './hooks/useMatchWatcher';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { useState, useEffect } from 'react';
+import LoginScreen       from './components/LoginScreen.jsx';
+import SettingsPanel     from './components/SettingsPanel.jsx';
+import StreamSidebar     from './components/StreamSidebar.jsx';
+import MatchStatusBar    from './components/MatchStatusBar.jsx';
+import StreamViewer      from './components/StreamViewer.jsx';
+import MatchNotification from './components/MatchNotification.jsx';
+import { useFirebase }   from './hooks/useFirebase.js';
+import { useLocalStorage } from './hooks/useLocalStorage.js';
+import { ensureAuth, setupPresence } from './firebase.js';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(
-      () => !!sessionStorage.getItem('appPassword')
+    () => !!sessionStorage.getItem('appPassword')
   );
-  const [showSettings, setShowSettings] = useState(false);
-  const [favTeams,      setFavTeams]      = useLocalStorage('frc-fav-teams', []);
-  const [offsetSeconds, setOffsetSeconds] = useLocalStorage('frc-offset', 180);
+  const [showSettings,    setShowSettings]    = useState(false);
+  const [firebaseReady,   setFirebaseReady]   = useState(false);
 
+  // ── Persisted settings ──────────────────────────────────────────────────────
+  const [favTeams,        setFavTeams]        = useLocalStorage('am-fav-teams',      []);
+  const [offsetSeconds,   setOffsetSeconds]   = useLocalStorage('am-offset',         180);
+  const [endOffsetSeconds,setEndOffsetSeconds]= useLocalStorage('am-end-offset',     15);
+  const [forceSwitch,     setForceSwitch]     = useLocalStorage('am-force-switch',   false);
+  const [afterMatchEnds,  setAfterMatchEnds]  = useLocalStorage('am-after-match',    'stay');
+  const [homeEvent,       setHomeEvent]       = useLocalStorage('am-home-event',     '');
+
+  // ── Firebase anon auth ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    ensureAuth()
+      .then(() => setupPresence())
+      .then(() => setFirebaseReady(true))
+      .catch(console.error);
+  }, [isAuthenticated]);
+
+  // ── Core hook ───────────────────────────────────────────────────────────────
   const {
-    activeEvents,
-    eventMatchData,
+    teamData,
+    eventData,
     currentStreamEvent,
-    streamUrls,
-    notification,
-    deferredSwitch,
-    categorizedEvents,
     isWatchingMatch,
+    deferredSwitch,
+    notification,
+    activeSessions,
+    categorizedEvents,
     switchToEvent,
     acceptPendingSwitch,
     dismissNotification,
-    pollMatches,
-    setActiveWebcast,
+    setActiveStream,
     clearStreamPin,
-  } = useMatchWatcher({ favTeams, offsetSeconds, isAuthenticated });
+  } = useFirebase({
+    favTeams,
+    offsetSeconds,
+    endOffsetSeconds,
+    forceSwitch,
+    afterMatchEnds,
+    homeEvent,
+    isAuthenticated: isAuthenticated && firebaseReady,
+  });
 
   if (!isAuthenticated) {
     return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
   }
 
-  // streamUrls[key] = { webcasts: [{url,type,label}], activeIdx }
-  const currentStreamEntry = currentStreamEvent ? streamUrls[currentStreamEvent] : null;
-  const currentStream = currentStreamEntry
-      ? currentStreamEntry.webcasts[currentStreamEntry.activeIdx] ?? null
-      : null;
-  const currentEvent  = activeEvents.find(e => e.key === currentStreamEvent);
+  if (!firebaseReady) {
+    return (
+      <div style={loadingStyle}>
+        <style>{globalCss}</style>
+        <div style={loadingInner}>
+          <div style={loadingIcon}>⚡</div>
+          <div style={loadingText}>FRC Automix</div>
+          <div style={loadingBar}><div style={loadingFill} /></div>
+          <div style={loadingSub}>Connecting…</div>
+        </div>
+      </div>
+    );
+  }
+
+  const currentEvent = eventData[currentStreamEvent] || {};
 
   return (
-      <div style={S.root}>
-        <style>{globalCss}</style>
+    <div style={S.root}>
+      <style>{globalCss}</style>
 
-        {/* ── Header ── */}
-        <header style={S.header}>
-          <div style={S.logo}>
-            <span style={S.logoGear}>⚙</span>
-            <span style={S.logoText}>FRC Watcher</span>
-            <span style={S.livePill}>LIVE</span>
-          </div>
-
-          <div style={S.headerMid}>
-            {isWatchingMatch && (
-                <div style={S.chip('#166534', '#22c55e', '#4ade80')}>
-                  <span style={S.pulseDot('#22c55e')} />
-                  Watching — auto-switch locked
-                </div>
-            )}
-            {deferredSwitch && !isWatchingMatch && (
-                <div style={S.chip('#1e3a5f', '#2563eb', '#93c5fd')}>
-                  <span style={S.pulseDot('#2563eb')} />
-                  Pending switch queued
-                </div>
-            )}
-            {!isWatchingMatch && !deferredSwitch && favTeams.length > 0 && (
-                <div style={S.chip('#111827', '#1e3a5f', '#475569')}>
-                  Monitoring {favTeams.length} team{favTeams.length !== 1 ? 's' : ''}
-                </div>
-            )}
-            {favTeams.length === 0 && (
-                <div style={S.chip('#111827', '#1e3a5f', '#475569')}>
-                  Add teams in Settings to enable auto-switch
-                </div>
-            )}
-          </div>
-
-          <div style={S.headerRight}>
-            <div style={S.offsetPill}>
-              <span style={S.offsetLabel}>OFFSET</span>
-              <span style={S.offsetVal}>{offsetSeconds}s</span>
-              <span style={S.offsetMins}>/ {(offsetSeconds/60).toFixed(1)}m</span>
-            </div>
-            <button style={S.btn} onClick={() => setShowSettings(true)}>⚙ Settings</button>
-            <button style={{ ...S.btn, padding: '6px 11px', fontSize: 17 }} onClick={pollMatches} title="Refresh now">↻</button>
-          </div>
-        </header>
-
-        {/* ── Body ── */}
-        <div style={S.body}>
-          <StreamSidebar
-              categorizedEvents={categorizedEvents}
-              currentStreamEvent={currentStreamEvent}
-              switchToEvent={switchToEvent}
-              streamUrls={streamUrls}
-              setActiveWebcast={setActiveWebcast}
-              eventMatchData={eventMatchData}
-              favTeams={favTeams}
-          />
-
-          <div style={S.main}>
-            <MatchStatusBar
-                eventMatchData={eventMatchData}
-                currentStreamEvent={currentStreamEvent}
-                favTeams={favTeams}
-                activeEvents={activeEvents}
-            />
-            <StreamViewer
-                streamInfo={currentStream}
-                streamEntry={currentStreamEntry}
-                eventName={currentEvent?.short_name || currentEvent?.name || currentStreamEvent}
-                onSelectWebcast={(idx) => currentStreamEvent && setActiveWebcast(currentStreamEvent, idx)}
-                onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
-            />
-          </div>
+      {/* ── Header ── */}
+      <header style={S.header}>
+        {/* Logo */}
+        <div style={S.logo}>
+          <span style={S.logoMark}>⚡</span>
+          <span style={S.logoText}>FRC Automix</span>
         </div>
 
-        {showSettings && (
-            <SettingsPanel
-                favTeams={favTeams}
-                setFavTeams={setFavTeams}
-                offsetSeconds={offsetSeconds}
-                setOffsetSeconds={setOffsetSeconds}
-                onClose={() => setShowSettings(false)}
-            />
-        )}
+        {/* Status center */}
+        <div style={S.headerMid}>
+          {isWatchingMatch && (
+            <div style={S.chip('#14532d', '#22c55e', '#4ade80')}>
+              <span style={S.dot('#22c55e')} />
+              Watching — auto-switch locked
+            </div>
+          )}
+          {deferredSwitch && !isWatchingMatch && (
+            <div style={S.chip('#1e3a5f', '#2563eb', '#93c5fd')}>
+              <span style={S.dot('#3b82f6')} />
+              Switch queued after match
+            </div>
+          )}
+          {!isWatchingMatch && !deferredSwitch && favTeams.length > 0 && (
+            <div style={S.chip('#0d1526', '#1a2e4a', '#374151')}>
+              Monitoring {favTeams.length} team{favTeams.length !== 1 ? 's' : ''}
+            </div>
+          )}
+          {favTeams.length === 0 && (
+            <button style={S.noTeamsBtn} onClick={() => setShowSettings(true)}>
+              + Add favorite teams to get started
+            </button>
+          )}
+        </div>
 
-        <MatchNotification
-            notification={notification}
-            onAccept={acceptPendingSwitch}
-            onDismiss={dismissNotification}
+        {/* Right side */}
+        <div style={S.headerRight}>
+          {/* Live viewers */}
+          {activeSessions > 0 && (
+            <div style={S.viewerCount}>
+              <span style={S.dot('#22c55e')} />
+              <span style={S.viewerNum}>{activeSessions}</span>
+              <span style={S.viewerLabel}>watching</span>
+            </div>
+          )}
+
+          {/* Offset display */}
+          <div style={S.offsetPill}>
+            <span style={S.offsetLabel}>+{offsetSeconds}s</span>
+          </div>
+
+          <button style={S.settingsBtn} onClick={() => setShowSettings(true)}>
+            ⚙ Settings
+          </button>
+        </div>
+      </header>
+
+      {/* ── Body ── */}
+      <div style={S.body}>
+        <StreamSidebar
+          categorizedEvents={categorizedEvents}
+          currentStreamEvent={currentStreamEvent}
+          switchToEvent={switchToEvent}
+          eventData={eventData}
+          teamData={teamData}
+          favTeams={favTeams}
         />
+
+        <div style={S.main}>
+          <MatchStatusBar
+            currentStreamEvent={currentStreamEvent}
+            eventData={eventData}
+            favTeams={favTeams}
+          />
+          <StreamViewer
+            currentStreamEvent={currentStreamEvent}
+            eventData={eventData}
+            onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
+            onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
+          />
+        </div>
       </div>
+
+      {/* ── Settings panel ── */}
+      {showSettings && (
+        <SettingsPanel
+          favTeams={favTeams}             setFavTeams={setFavTeams}
+          offsetSeconds={offsetSeconds}   setOffsetSeconds={setOffsetSeconds}
+          endOffsetSeconds={endOffsetSeconds} setEndOffsetSeconds={setEndOffsetSeconds}
+          forceSwitch={forceSwitch}       setForceSwitch={setForceSwitch}
+          afterMatchEnds={afterMatchEnds} setAfterMatchEnds={setAfterMatchEnds}
+          homeEvent={homeEvent}           setHomeEvent={setHomeEvent}
+          teamData={teamData}
+          eventData={eventData}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* ── Match notification ── */}
+      <MatchNotification
+        notification={notification}
+        teamData={teamData}
+        eventData={eventData}
+        onAccept={acceptPendingSwitch}
+        onDismiss={dismissNotification}
+      />
+    </div>
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
   root: {
     display: 'flex', flexDirection: 'column', height: '100vh',
-    background: '#0a0e1a', color: '#e2e8f0',
-    fontFamily: "'Barlow', 'Segoe UI', sans-serif", overflow: 'hidden',
+    background: '#070b14', color: '#e2e8f0', overflow: 'hidden',
+    fontFamily: "'Barlow', 'Segoe UI', sans-serif",
   },
   header: {
-    height: 52, background: '#080d1a', borderBottom: '1px solid #1a2e4a',
-    display: 'flex', alignItems: 'center', padding: '0 18px', gap: 16,
-    flexShrink: 0, zIndex: 100,
+    height: 52, background: '#070b14',
+    borderBottom: '1px solid #1a2e4a',
+    display: 'flex', alignItems: 'center',
+    padding: '0 16px', gap: 16, flexShrink: 0, zIndex: 100,
   },
   logo: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
-  logoGear: { fontSize: 17, color: '#2563eb' },
-  logoText: {
-    color: '#e2e8f0', fontSize: 16, fontWeight: 800,
-    letterSpacing: '0.07em', textTransform: 'uppercase',
-    fontFamily: "'Barlow Condensed', sans-serif",
+  logoMark: {
+    fontSize: 18, width: 30, height: 30, borderRadius: 8,
+    background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  livePill: {
-    background: '#dc2626', color: '#fff', fontSize: 9, fontWeight: 900,
-    padding: '2px 6px', borderRadius: 3, letterSpacing: '0.1em',
-    animation: 'pulse 2s infinite',
+  logoText: {
+    color: '#e2e8f0', fontSize: 15, fontWeight: 800,
+    letterSpacing: '0.06em', textTransform: 'uppercase',
+    fontFamily: "'Barlow Condensed', sans-serif",
   },
   headerMid: { flex: 1, display: 'flex', justifyContent: 'center' },
   chip: (bg, border, color) => ({
@@ -171,48 +222,74 @@ const S = {
     background: bg, border: `1px solid ${border}`, color,
     borderRadius: 20, padding: '4px 14px', fontSize: 12, fontWeight: 600,
   }),
-  pulseDot: (color) => ({
+  dot: (color) => ({
     width: 7, height: 7, borderRadius: '50%', background: color,
     display: 'inline-block', animation: 'pulse 1.5s infinite', flexShrink: 0,
   }),
-  headerRight: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
-  offsetPill: {
-    display: 'flex', alignItems: 'center', gap: 5,
+  noTeamsBtn: {
+    background: 'transparent', border: '1px dashed #1a2e4a',
+    color: '#374151', borderRadius: 20, padding: '5px 16px',
+    fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+    transition: 'border-color 0.2s, color 0.2s',
+  },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 },
+  viewerCount: {
+    display: 'flex', alignItems: 'center', gap: 6,
     background: '#0d1526', border: '1px solid #1a2e4a',
-    borderRadius: 8, padding: '5px 12px',
+    borderRadius: 20, padding: '4px 12px',
   },
-  offsetLabel: {
-    color: '#374151', fontSize: 9, fontWeight: 800,
-    letterSpacing: '0.12em', textTransform: 'uppercase',
-  },
-  offsetVal: {
-    color: '#2563eb', fontSize: 13, fontWeight: 800,
+  viewerNum: {
+    color: '#e2e8f0', fontSize: 14, fontWeight: 800,
     fontFamily: "'Barlow Condensed', sans-serif",
   },
-  offsetMins: { color: '#374151', fontSize: 10 },
-  btn: {
+  viewerLabel: { color: '#374151', fontSize: 11 },
+  offsetPill: {
+    background: '#0d1526', border: '1px solid #1a2e4a',
+    borderRadius: 8, padding: '5px 10px',
+  },
+  offsetLabel: {
+    color: '#2563eb', fontSize: 12, fontWeight: 800,
+    fontFamily: "'Barlow Condensed', sans-serif",
+  },
+  settingsBtn: {
     padding: '6px 14px', background: 'transparent',
     border: '1px solid #1a2e4a', borderRadius: 8,
-    color: '#94a3b8', fontSize: 13, fontWeight: 600,
-    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-    transition: 'border-color 0.15s, color 0.15s',
-    fontFamily: 'inherit',
+    color: '#64748b', fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', fontFamily: 'inherit',
+    display: 'flex', alignItems: 'center', gap: 6,
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden' },
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
 };
 
+const loadingStyle = {
+  height: '100vh', background: '#070b14',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  fontFamily: "'Barlow Condensed', sans-serif",
+};
+const loadingInner = { textAlign: 'center' };
+const loadingIcon  = { fontSize: 48, marginBottom: 12, filter: 'drop-shadow(0 0 20px #2563eb)' };
+const loadingText  = { color: '#e2e8f0', fontSize: 22, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 20 };
+const loadingBar   = { width: 200, height: 2, background: '#1a2e4a', borderRadius: 1, overflow: 'hidden', margin: '0 auto 12px' };
+const loadingFill  = { height: '100%', background: 'linear-gradient(90deg, #1d4ed8, #3b82f6)', animation: 'loadSlide 1.5s ease-in-out infinite', borderRadius: 1 };
+const loadingSub   = { color: '#374151', fontSize: 13 };
+
 const globalCss = `
   @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { margin: 0; overflow: hidden; background: #0a0e1a; }
+  body { margin: 0; overflow: hidden; background: #070b14; }
   ::-webkit-scrollbar { width: 5px; }
-  ::-webkit-scrollbar-track { background: #080d1a; }
+  ::-webkit-scrollbar-track { background: #070b14; }
   ::-webkit-scrollbar-thumb { background: #1a2e4a; border-radius: 3px; }
-  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
   @keyframes slideIn {
-    from { transform: translateX(110%) translateY(16px); opacity:0 }
-    to   { transform: translateX(0)     translateY(0);   opacity:1 }
+    from { transform: translateX(110%) translateY(16px); opacity: 0; }
+    to   { transform: translateX(0) translateY(0); opacity: 1; }
   }
-  button:hover { filter: brightness(1.15); }
+  @keyframes loadSlide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+  button:hover { filter: brightness(1.2); }
+  select { appearance: none; }
 `;

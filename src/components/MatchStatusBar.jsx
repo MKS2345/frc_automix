@@ -1,157 +1,148 @@
 // src/components/MatchStatusBar.jsx
-import { normalizeStatus, teamsInMatch } from '../hooks/useMatchWatcher';
+import { normalizeStatus } from '../hooks/useFirebase.js';
 
-function TeamChip({ number, favTeams, color }) {
-  const priority = favTeams.indexOf(number);
-  const isFav = priority !== -1;
+function TeamChip({ number, favTeams, alliance }) {
+  if (!number || number === 'null') return null;
+  const num = number.toString().replace(/frc/i, '');
+  const isFav = favTeams.includes(parseInt(num, 10));
+  const isRed = alliance === 'red';
+
   return (
-      <span style={{
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-        padding: '3px 10px', borderRadius: 6,
-        background: color === 'red' ? '#7f1d1d' : '#1e3a5f',
-        border: `1px solid ${color === 'red' ? '#dc2626' : '#2563eb'}`,
-        color: isFav ? '#fbbf24' : '#e2e8f0',
-        fontSize: 13, fontWeight: isFav ? 800 : 600,
-        fontFamily: "'Barlow Condensed', sans-serif",
-      }}>
-      {isFav && <span style={{ fontSize: 10 }}>★</span>}
-        {number}
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '3px 10px', borderRadius: 6,
+      background: isRed ? '#7f1d1d' : '#1e3a5f',
+      border: `1px solid ${isRed ? '#dc2626' : '#2563eb'}`,
+      color: isFav ? '#fbbf24' : '#e2e8f0',
+      fontSize: 13, fontWeight: isFav ? 800 : 600,
+      fontFamily: "'Barlow Condensed', sans-serif",
+      flexShrink: 0,
+    }}>
+      {isFav && <span style={{ fontSize: 9 }}>★</span>}
+      {num}
     </span>
   );
 }
 
-export default function MatchStatusBar({ eventMatchData, currentStreamEvent, favTeams, activeEvents }) {
+export default function MatchStatusBar({ currentStreamEvent, eventData, favTeams }) {
   if (!currentStreamEvent) {
     return (
-        <div style={styles.bar}>
-          <span style={styles.noStream}>No stream selected — choose an event from the sidebar</span>
-        </div>
+      <div style={S.bar}>
+        <span style={S.idle}>Select an event from the sidebar</span>
+      </div>
     );
   }
 
-  const matches = eventMatchData[currentStreamEvent] || [];
-  const event = activeEvents?.find(e => e.key === currentStreamEvent);
+  const edata = eventData[currentStreamEvent] || {};
+  const cm    = edata.currentMatch;  // { label, r1-r3, b1-b3, status, onFieldAt }
+  const od    = edata.onDeck;        // { label, r1-r3, b1-b3 }
 
-  // Nexus never clears old "On field" statuses — every past match stays marked onField forever.
-  // The real current match is the LAST one in the sorted array with onField/inProgress status,
-  // or better: find the match with the most recent estimatedStartTime / actualStartTime.
-  // Fallback: use array position (Nexus sorts by play order, so last = most recent).
-  const activeMatches = matches.filter(m => {
-    const s = normalizeStatus(m.status);
-    return s === 'onField' || s === 'inProgress';
-  });
-  // Pick the one with the latest estimated/actual start time, or last in array
-  const activeMatch = activeMatches.reduce((best, m) => {
-    if (!best) return m;
-    const bestTime = best.times?.actualStartTime ?? best.times?.estimatedStartTime ?? 0;
-    const mTime    = m.times?.actualStartTime    ?? m.times?.estimatedStartTime    ?? 0;
-    return mTime >= bestTime ? m : best;
-  }, null);
+  const red  = cm ? [cm.r1, cm.r2, cm.r3].filter(t => t && t !== 'null') : [];
+  const blue = cm ? [cm.b1, cm.b2, cm.b3].filter(t => t && t !== 'null') : [];
 
-  // On deck: last queuing/onDeck match (same stale-status problem)
-  const deckMatches = matches.filter(m => {
-    const s = normalizeStatus(m.status);
-    return s === 'onDeck' || s === 'queuing';
-  });
-  const deckMatch = deckMatches.reduce((best, m) => {
-    if (!best) return m;
-    const bestTime = best.times?.estimatedOnDeckTime ?? best.times?.estimatedQueueTime ?? 0;
-    const mTime    = m.times?.estimatedOnDeckTime    ?? m.times?.estimatedQueueTime    ?? 0;
-    return mTime >= bestTime ? m : best;
-  }, null);
-
-  const getTeams = (m) => {
-    if (!m) return { red: [], blue: [] };
-    return {
-      red:  (m.redTeams  || []).filter(t => t != null).map(t => parseInt(t, 10)).filter(n => n > 0),
-      blue: (m.blueTeams || []).filter(t => t != null).map(t => parseInt(t, 10)).filter(n => n > 0),
-    };
-  };
-
-  const { red: redTeams, blue: blueTeams } = getTeams(activeMatch);
+  const status = normalizeStatus(cm?.status);
+  const isActive = status === 'onField' || status === 'inProgress';
 
   return (
-      <div style={styles.bar}>
-        <div style={styles.eventInfo}>
-          <span style={styles.eventName}>{event?.short_name || currentStreamEvent}</span>
-          <span style={styles.dot}>·</span>
-          {activeMatch ? (
-              <span style={styles.matchStatus}>
-            <span style={styles.onFieldBadge}>ON FIELD</span>
-                {activeMatch.label || 'Match'}
+    <div style={S.bar}>
+      {/* Event name */}
+      <div style={S.eventInfo}>
+        <span style={S.eventName}>{edata.shortName || edata.name || currentStreamEvent}</span>
+        <span style={S.sep}>·</span>
+        {cm ? (
+          <span style={S.matchRow}>
+            {isActive && <span style={S.onFieldBadge}>ON FIELD</span>}
+            <span style={S.matchLabel}>{cm.label}</span>
           </span>
-          ) : (
-              <span style={styles.waitingText}>Waiting for match…</span>
-          )}
-        </div>
-
-        {activeMatch && (
-            <div style={styles.alliances}>
-              <div style={styles.alliance}>
-                <span style={styles.redLabel}>RED</span>
-                <div style={styles.chips}>
-                  {redTeams.map(t => <TeamChip key={t} number={t} favTeams={favTeams} color="red" />)}
-                </div>
-              </div>
-              <span style={styles.vs}>VS</span>
-              <div style={styles.alliance}>
-                <span style={styles.blueLabel}>BLUE</span>
-                <div style={styles.chips}>
-                  {blueTeams.map(t => <TeamChip key={t} number={t} favTeams={favTeams} color="blue" />)}
-                </div>
-              </div>
-            </div>
-        )}
-
-        {deckMatch && (
-            <div style={styles.onDeck}>
-          <span style={styles.deckLabel}>
-            {normalizeStatus(deckMatch.status) === 'queuing' ? 'Queuing' : 'On Deck'}:
-          </span>
-              <span style={styles.deckMatch}>{deckMatch.label}</span>
-              {(() => {
-                const { red, blue } = getTeams(deckMatch);
-                const favInDeck = [...red, ...blue].filter(t => favTeams.includes(t));
-                if (!favInDeck.length) return null;
-                return <span style={styles.deckFavs}>⭐ {favInDeck.map(t => `#${t}`).join(' ')}</span>;
-              })()}
-            </div>
+        ) : (
+          <span style={S.waiting}>Waiting for match…</span>
         )}
       </div>
+
+      {/* Alliance chips */}
+      {cm && (
+        <div style={S.alliances}>
+          <div style={S.alliance}>
+            <span style={S.redLabel}>RED</span>
+            <div style={S.chips}>
+              {red.map(t => <TeamChip key={t} number={t} favTeams={favTeams} alliance="red" />)}
+            </div>
+          </div>
+          <span style={S.vs}>VS</span>
+          <div style={S.alliance}>
+            <span style={S.blueLabel}>BLUE</span>
+            <div style={S.chips}>
+              {blue.map(t => <TeamChip key={t} number={t} favTeams={favTeams} alliance="blue" />)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* On deck */}
+      {od && (
+        <div style={S.deckRow}>
+          <span style={S.deckLabel}>On Deck:</span>
+          <span style={S.deckMatch}>{od.label}</span>
+          {(() => {
+            const deckTeams = [od.r1, od.r2, od.r3, od.b1, od.b2, od.b3]
+              .filter(t => t && t !== 'null')
+              .map(t => parseInt(t, 10))
+              .filter(n => !isNaN(n));
+            const favInDeck = deckTeams.filter(n => favTeams.includes(n));
+            if (!favInDeck.length) return null;
+            return (
+              <span style={S.deckFavs}>
+                ⭐ {favInDeck.map(n => `#${n}`).join(' ')}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+    </div>
   );
 }
 
-const styles = {
+const S = {
   bar: {
-    height: 56, background: '#080d1a', borderBottom: '1px solid #1a2e4a',
-    display: 'flex', alignItems: 'center', padding: '0 20px',
-    gap: 24, overflow: 'hidden', flexShrink: 0,
+    height: 54,
+    background: '#070b14',
+    borderBottom: '1px solid #1a2e4a',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0 18px',
+    gap: 20,
+    overflow: 'hidden',
+    flexShrink: 0,
   },
-  noStream: { color: '#374151', fontSize: 13, fontStyle: 'italic' },
+  idle:      { color: '#374151', fontSize: 13, fontStyle: 'italic' },
   eventInfo: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
   eventName: {
     color: '#94a3b8', fontSize: 13, fontWeight: 700,
-    letterSpacing: '0.05em', fontFamily: "'Barlow Condensed', sans-serif", textTransform: 'uppercase',
+    letterSpacing: '0.05em', textTransform: 'uppercase',
+    fontFamily: "'Barlow Condensed', sans-serif",
   },
-  dot: { color: '#1e3a5f' },
-  matchStatus: { display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0', fontSize: 13 },
+  sep: { color: '#1a2e4a' },
+  matchRow: { display: 'flex', alignItems: 'center', gap: 8 },
   onFieldBadge: {
-    background: '#166534', border: '1px solid #22c55e', color: '#4ade80',
-    borderRadius: 4, padding: '1px 7px', fontSize: 10, fontWeight: 800,
-    letterSpacing: '0.08em', animation: 'pulse 2s infinite',
+    background: '#14532d', border: '1px solid #22c55e', color: '#4ade80',
+    borderRadius: 4, padding: '1px 7px', fontSize: 10,
+    fontWeight: 800, letterSpacing: '0.08em', animation: 'pulse 2s infinite',
   },
-  waitingText: { color: '#374151', fontSize: 12, fontStyle: 'italic' },
-  alliances: { display: 'flex', alignItems: 'center', gap: 16, flex: 1 },
-  alliance: { display: 'flex', alignItems: 'center', gap: 8 },
-  redLabel:  { color: '#dc2626', fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif" },
-  blueLabel: { color: '#2563eb', fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif" },
-  chips: { display: 'flex', gap: 5 },
-  vs: { color: '#1e3a5f', fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif" },
-  onDeck: {
-    display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0,
-    background: '#111827', border: '1px solid #1a2e4a', borderRadius: 8, padding: '4px 12px',
+  matchLabel: { color: '#e2e8f0', fontSize: 13 },
+  waiting:    { color: '#374151', fontSize: 12, fontStyle: 'italic' },
+  alliances:  { display: 'flex', alignItems: 'center', gap: 14, flex: 1, overflow: 'hidden' },
+  alliance:   { display: 'flex', alignItems: 'center', gap: 7 },
+  redLabel:   { color: '#ef4444', fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 },
+  blueLabel:  { color: '#3b82f6', fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 },
+  chips: { display: 'flex', gap: 4 },
+  vs: { color: '#1a2e4a', fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', fontFamily: "'Barlow Condensed', sans-serif", flexShrink: 0 },
+  deckRow: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    marginLeft: 'auto', flexShrink: 0,
+    background: '#0d1526', border: '1px solid #1a2e4a',
+    borderRadius: 8, padding: '4px 12px',
   },
-  deckLabel: { color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' },
-  deckMatch: { color: '#94a3b8', fontSize: 12 },
+  deckLabel: { color: '#374151', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' },
+  deckMatch: { color: '#64748b', fontSize: 12 },
   deckFavs:  { color: '#fbbf24', fontSize: 12, fontWeight: 700 },
 };

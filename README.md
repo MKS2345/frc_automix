@@ -1,141 +1,103 @@
-# FRC Watcher
+# FRC Automix
 
-Live FRC match stream switcher with automatic priority-based switching.
+Live FRC match stream switcher — automatically switches to streams when your favorite teams are on field.
 
-## Features
+## Architecture
 
-- Monitors multiple FRC events simultaneously via Nexus API
-- Auto-switches to streams when favorite teams are on field
-- Priority queue: highest-priority team wins mid-match conflicts
-- Mid-match popup notifications
-- 3-minute configurable stream start delay (accounts for robot enable time)
-- Password-protected with API keys never exposed to the browser
-- Favorite teams persisted in localStorage with drag-reorder priority
+```
+Nexus Webhook → /api/webhook → Firebase RTDB
+                                     ↓
+                          App subscribes to /teams/{num}
+                          for each favorite team only
+                          (push updates, zero polling)
+```
+
+- **Zero polling** — Nexus webhooks push updates server-side; app uses Firebase listeners
+- **On-demand caching** — TBA data fetched only when needed, cached in Firebase
+- **Anonymous auth** — Firebase anon auth gates all RTDB reads; bots can't hit APIs
+- **YouTube Data API v3** — definitive live stream detection, no scraping
 
 ---
 
-## Setup
+## Vercel Environment Variables
 
-### 1. Install dependencies
+Set all of these in **Vercel Dashboard → Settings → Environment Variables**:
+
+| Variable | Description |
+|---|---|
+| `TBA_API_KEY` | The Blue Alliance read API key |
+| `NEXUS_API_KEY` | Nexus API key |
+| `NEXUS_WEBHOOK_TOKEN` | Token from frc.nexus/api after registering webhook |
+| `APP_PASSWORD` | Password for the app login screen |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 key (for live detection) |
+| `FIREBASE_SERVICE_ACCOUNT` | Full service account JSON as a single-line string |
+| `FIREBASE_DATABASE_URL` | e.g. `https://frc-automix-default-rtdb.firebaseio.com` |
+| `VITE_FIREBASE_API_KEY` | Firebase web config (safe to expose) |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase web config |
+| `VITE_FIREBASE_DATABASE_URL` | Firebase web config |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase web config |
+
+---
+
+## Firebase Setup
+
+### Security Rules
+Paste the contents of `database.rules.json` into:
+**Firebase Console → Realtime Database → Rules**
+
+### Presence & Analytics
+The active session count uses Firebase's `.info/connected` presence system.
+Active viewers are counted as children of `/presence`.
+
+---
+
+## Nexus Webhook Registration
+
+1. Go to https://frc.nexus/api
+2. Register your webhook URL: `https://your-app.vercel.app/api/webhook`
+3. Copy the `Nexus-Token` → add as `NEXUS_WEBHOOK_TOKEN` in Vercel
+
+The webhook fires on every match status change. The server writes:
+- `/teams/{num}` for each of the 6 teams in the match
+- `/events/{eventKey}/currentMatch` and `/onDeck`
+
+---
+
+## Settings
+
+| Setting | Description |
+|---|---|
+| Favorite Teams | Ordered list — top = highest priority |
+| Stream Start Offset | Seconds after "on field" before switching (default 3min) |
+| Stream End Offset | Seconds after match ends before switching away (default 15s) |
+| Auto-Switch Higher Priority | Immediately switch for higher-ranked teams, or always ask |
+| After Match Ends | Stay / return to home event / random event with your teams |
+
+---
+
+## Stream Detection
+
+Stream liveness is checked via **YouTube Data API v3** (`snippet.liveBroadcastContent`):
+- `"live"` → currently streaming, select this one
+- `"upcoming"` → scheduled but not started
+- `"none"` → VOD or ended
+
+Checks run when:
+1. Event data is first loaded
+2. Event data is >1hr old  
+3. User clicks "↺ Recheck" in the stream picker
+4. Nexus webhook fires for an event with stale stream data
+
+Users can manually pin a stream — the pin persists in localStorage and is respected until cleared with "↺ Auto".
+
+---
+
+## Local Development
 
 ```bash
+cp .env.example .env.local
+# Fill in your keys
+
 npm install
+vercel dev   # runs frontend + API functions together
 ```
-
-### 2. Local development
-
-Create a `.env.local` file (never commit this):
-
-```env
-TBA_API_KEY=your_tba_read_api_key_here
-NEXUS_API_KEY=your_nexus_api_key_here
-APP_PASSWORD=your_chosen_password_here
-```
-
-Run both the Vite dev server and a local API server:
-
-```bash
-npm run dev
-```
-
-> Note: For local dev, the Vite proxy in `vite.config.js` forwards `/api/*` to `localhost:3001`.
-> You'll need to run a small local Express server or use `vercel dev` (see below).
-
-**Recommended for local dev: use Vercel CLI**
-
-```bash
-npm install -g vercel
-vercel dev
-```
-
-This spins up both the frontend and the serverless functions locally with your `.env.local` variables loaded.
-
----
-
-## Deploying to Vercel
-
-### 1. Push to GitHub
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-# Create repo on GitHub, then:
-git remote add origin https://github.com/YOUR_USERNAME/frc-watcher.git
-git push -u origin main
-```
-
-### 2. Import to Vercel
-
-1. Go to [vercel.com](https://vercel.com) → New Project
-2. Import your GitHub repo
-3. Framework: **Vite**
-4. Build command: `npm run build`
-5. Output directory: `dist`
-
-### 3. Set Environment Variables in Vercel ⚠️
-
-**This is how you keep your API keys safe.** Go to:
-**Project → Settings → Environment Variables**
-
-Add these three:
-
-| Name | Value | Environment |
-|------|-------|-------------|
-| `TBA_API_KEY` | your TBA read API key | Production, Preview, Development |
-| `NEXUS_API_KEY` | your Nexus API key | Production, Preview, Development |
-| `APP_PASSWORD` | your chosen password | Production, Preview, Development |
-
-> Keys set here are **encrypted at rest** and **never included in the deployed bundle**.
-> The browser only ever talks to `/api/tba` and `/api/nexus` — your actual keys never leave Vercel's servers.
-
-### 4. Deploy
-
-Vercel auto-deploys on every push to `main`. Or click "Redeploy" in the dashboard.
-
----
-
-## API Keys
-
-### The Blue Alliance (TBA)
-1. Sign in at https://www.thebluealliance.com/account
-2. Go to Account → Read API Keys
-3. Create a new key, copy it
-
-### FRC Nexus
-1. Contact the Nexus team at https://frc.nexus or check their documentation
-2. Keys are event-based or global depending on access tier
-
----
-
-## Security Model
-
-```
-Browser → /api/tba?path=... → Vercel Function → TBA API (with key)
-Browser → /api/nexus?eventCode=... → Vercel Function → Nexus API (with key)
-Browser → /api/auth (POST password) → Vercel Function → checks APP_PASSWORD env var
-```
-
-- The password check on every API call means even if someone guesses your URL, they can't hit the APIs
-- `APP_PASSWORD` env var is also used as the `x-app-password` header on all requests
-- If `APP_PASSWORD` is not set, the app runs without password protection (good for private deploys)
-
----
-
-## Match Switching Logic
-
-1. **Match marked on-field in Nexus**
-2. Timer starts (default: 180s / 3 minutes offset)
-3. At timer expiry:
-   - **Not watching**: Switch to best-priority fav team's event
-   - **Watching current match**: Show popup (15s auto-dismiss), user can switch now
-   - **Higher priority team also on-field**: Wait for higher-priority match first
-4. Match completes → lock releases → next on-field match can trigger
-
----
-
-## Customization
-
-- `POLL_INTERVAL` in `useMatchWatcher.js` (default 15s) — how often Nexus is polled
-- Offset default is 180s but adjustable in Settings panel
-- Presets available: 2m, 3m, 4m, 5m

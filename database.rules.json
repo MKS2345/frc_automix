@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "teams": {
+      "$teamNum": {
+        ".read":  "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "events": {
+      "$eventKey": {
+        ".read":  "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "presence": {
+      "$uid": {
+        ".read":  "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "analytics": {
+      ".read":  "auth != null",
+      "totalSessions": {
+        ".write": "auth != null"
+      },
+      "daily": {
+        "$date": {
+          ".write": "auth != null"
+        }
+      },
+      "activeSessions": {
+        ".read": "auth != null",
+        ".write": false
+      }
+    }
+  }
+}
