@@ -1,76 +1,89 @@
-// api/webhook.js
-// Receives Nexus push webhooks → writes lean data to Firebase RTDB.
-// Auth: Nexus-Token header only (Nexus doesn't send Firebase tokens).
-// Schema written:
-//   /teams/{num}  { status, onFieldAt, match, currentEvent, updatedAt }
-//   /events/{key} { currentMatch, onDeck, nexusActive, updatedAt }
-
 import { getDb } from './_firebase-admin.js';
 
-// Tell Vercel to parse the request body automatically
 export const config = {
   api: {
-    bodyParser: {
-      sizeLimit: '1mb',
-    },
+    bodyParser: false, // handle manually so we can log raw bytes
   },
 };
 
+// Read raw body as string regardless of content-type
+async function getRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => { data += chunk.toString(); });
+    req.on('end',  () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
 export default async function handler(req, res) {
-  // Manual body parse fallback — in case bodyParser config isn't picked up
-  if (req.method === 'POST' && !req.body) {
-    try {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const raw = Buffer.concat(chunks).toString('utf8');
-      req.body = raw ? JSON.parse(raw) : {};
-    } catch {
-      req.body = {};
-    }
+  const db  = getDb();
+  const ts  = Date.now();
+  const key = `debug/${ts}`;
+
+  // ── Log absolutely everything to Firebase immediately ─────────────────────
+  const entry = {
+    ts,
+    method:  req.method,
+    url:     req.url,
+    headers: req.headers,
+    rawBody: null,
+    parsedBody: null,
+    error: null,
+  };
+
+  try {
+    const raw = await getRawBody(req);
+    entry.rawBody = raw;
+    entry.parsedBody = raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    entry.error = `body parse failed: ${e.message}`;
   }
 
-  // Nexus sends a GET first to verify the endpoint is reachable, then POSTs events
+  // Write log first — before any other logic — so we always capture it
+  await db.ref(key).set(entry).catch(() => {});
+
+  // ── GET: verification ping from Nexus ─────────────────────────────────────
   if (req.method === 'GET') {
     return res.status(200).json({ ok: true, service: 'frc-automix-webhook' });
   }
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).end();
 
-  // Verify Nexus-Token — this is the only auth needed for the webhook
-  // (Nexus calls this, not the browser, so no Firebase token)
+  const body = entry.parsedBody || {};
+
+  // ── Nexus ownership verification ping ─────────────────────────────────────
+  // Nexus sends { token: "..." } in the body (no eventKey) to verify the endpoint.
+  // Just check the token and return 200.
+  if (body.token && !body.eventKey) {
+    const nexusToken = process.env.NEXUS_WEBHOOK_TOKEN;
+    if (nexusToken && body.token !== nexusToken) {
+      return res.status(401).json({ error: 'Token mismatch' });
+    }
+    return res.status(200).json({ ok: true, verified: true });
+  }
+
+  // ── Token check for real event payloads (token in header) ─────────────────
   const nexusToken = process.env.NEXUS_WEBHOOK_TOKEN;
   if (nexusToken) {
-    const incoming = req.headers['nexus-token'] || req.headers['Nexus-Token'];
-    if (incoming !== nexusToken) {
-      console.warn('[webhook] Invalid Nexus-Token');
+    const headerToken = req.headers['nexus-token'];
+    if (headerToken && headerToken !== nexusToken) {
       return res.status(401).json({ error: 'Invalid Nexus token' });
     }
   }
 
-  const body = req.body;
+  if (!body) return res.status(400).json({ error: 'No body', raw: entry.rawBody?.slice(0, 200) });
 
-  // Debug log — visible in Vercel function logs
-  console.log('[webhook] method:', req.method);
-  console.log('[webhook] headers:', JSON.stringify(req.headers));
-  console.log('[webhook] body:', JSON.stringify(body));
-
-  if (!body) return res.status(400).json({ error: 'No body' });
-
-  // Nexus sends either a full event payload or a single-match update
-  // Full event: { eventKey, matches: [...], dataAsOfTime }
-  // Single match: { eventKey, match: {...}, dataAsOfTime }
   const eventKey = body.eventKey;
-  if (!eventKey) return res.status(400).json({ error: 'No eventKey', receivedBody: JSON.stringify(body).slice(0, 200) });
+  if (!eventKey) return res.status(400).json({ error: 'No eventKey', keys: Object.keys(body) });
 
+  // ── Parse matches ─────────────────────────────────────────────────────────
   const allMatches = body.matches
       ? (Array.isArray(body.matches) ? body.matches : [])
       : (body.match ? [body.match] : []);
 
-  const now = body.dataAsOfTime || Date.now();
+  const now = body.dataAsOfTime || ts;
 
-  const db = getDb();
-
-  // ── Find current on-field and on-deck matches ─────────────────────────────
   const onFieldMatches = allMatches.filter(m => {
     const s = normalizeStatus(m.status);
     return s === 'onField' || s === 'inProgress';
@@ -85,13 +98,12 @@ export default async function handler(req, res) {
 
   const writes = [];
 
-  // ── Write event-level data ─────────────────────────────────────────────────
   const eventUpdate = {
     nexusActive: true,
     updatedAt: now,
     currentMatch: currentMatch ? {
-      label:       currentMatch.label || '',
-      status:      currentMatch.status || '',
+      label:  currentMatch.label || '',
+      status: currentMatch.status || '',
       r1: currentMatch.redTeams?.[0]  ?? null,
       r2: currentMatch.redTeams?.[1]  ?? null,
       r3: currentMatch.redTeams?.[2]  ?? null,
@@ -99,8 +111,7 @@ export default async function handler(req, res) {
       b2: currentMatch.blueTeams?.[1] ?? null,
       b3: currentMatch.blueTeams?.[2] ?? null,
       onFieldAt: currentMatch.times?.actualStartTime
-          ?? currentMatch.times?.estimatedStartTime
-          ?? now,
+          ?? currentMatch.times?.estimatedStartTime ?? now,
       estimatedStartAt: currentMatch.times?.estimatedStartTime ?? null,
     } : null,
     onDeck: onDeckMatch ? {
@@ -116,7 +127,6 @@ export default async function handler(req, res) {
 
   writes.push(db.ref(`events/${eventKey}`).update(eventUpdate));
 
-  // ── Write per-team data ───────────────────────────────────────────────────
   if (currentMatch) {
     const teams = [
       ...(currentMatch.redTeams  || []).map((t, i) => ({ num: t, alliance: 'red',  position: i + 1 })),
@@ -128,18 +138,15 @@ export default async function handler(req, res) {
     for (const { num, alliance, position } of teams) {
       const teamNum = num.toString().replace(/frc/i, '').trim();
       if (!teamNum || teamNum === 'null') continue;
-
       writes.push(
           db.ref(`teams/${teamNum}`).update({
             currentEvent: eventKey,
-            status:       matchStatus,
-            onFieldAt:    currentMatch.times?.actualStartTime
-                ?? currentMatch.times?.estimatedStartTime
-                ?? now,
+            status: matchStatus,
+            onFieldAt: currentMatch.times?.actualStartTime
+                ?? currentMatch.times?.estimatedStartTime ?? now,
             match: {
-              label:    currentMatch.label || '',
-              alliance,
-              position,
+              label: currentMatch.label || '',
+              alliance, position,
               r1: currentMatch.redTeams?.[0]  ?? null,
               r2: currentMatch.redTeams?.[1]  ?? null,
               r3: currentMatch.redTeams?.[2]  ?? null,
@@ -153,20 +160,15 @@ export default async function handler(req, res) {
     }
   }
 
-  // Also update stream freshness check — if Nexus is firing, event is running,
-  // trigger a stream recheck if streams haven't been checked in the last hour
+  // Trigger stream refresh if stale
   try {
     const streamSnap = await db.ref(`events/${eventKey}/streamsCheckedAt`).get();
     const checkedAt  = streamSnap.val();
-    const ONE_HOUR   = 60 * 60 * 1000;
-    if (!checkedAt || (Date.now() - checkedAt) > ONE_HOUR) {
-      // Fire-and-forget stream refresh
-      const origin = `https://${req.headers.host}`;
-      fetch(`${origin}/api/refresh-event`, {
+    if (!checkedAt || (Date.now() - checkedAt) > 60 * 60 * 1000) {
+      fetch(`https://${req.headers.host}/api/refresh-event`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Use internal service account auth for this server→server call
           'x-internal-secret': process.env.NEXUS_WEBHOOK_TOKEN || '',
         },
         body: JSON.stringify({ eventKey }),
@@ -175,10 +177,10 @@ export default async function handler(req, res) {
   } catch {}
 
   await Promise.allSettled(writes);
+  await db.ref(`${key}/result`).set('ok').catch(() => {});
   return res.status(200).json({ ok: true, event: eventKey });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function normalizeStatus(raw) {
   if (!raw) return 'unknown';
   const s = raw.toString().toLowerCase().replace(/[_\s-]/g, '');
