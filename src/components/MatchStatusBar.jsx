@@ -86,6 +86,7 @@ export default function MatchStatusBar({
     );
   }
 
+  const fav       = favTeams || [];
   const edata     = eventData[currentStreamEvent] || {};
   const cm        = edata.currentMatch;
   const od        = edata.onDeck;
@@ -140,7 +141,7 @@ export default function MatchStatusBar({
                     const favInDeck = [od.r1,od.r2,od.r3,od.b1,od.b2,od.b3]
                         .filter(t => t && t !== 'null')
                         .map(t => parseInt(t,10))
-                        .filter(n => favTeams.includes(n));
+                        .filter(n => fav.includes(n));
                     return favInDeck.length
                         ? <span style={S.deckFavs}>⭐{favInDeck.map(n=>`#${n}`).join(' ')}</span>
                         : null;
@@ -191,13 +192,13 @@ export default function MatchStatusBar({
               <AllianceTotal teams={redNums}  epaData={epaData} isRed={true}  />
               <div style={S.chips}>
                 {redNums.map(n => (
-                    <EpaChip key={n} teamNum={n} epa={epaData[n]} alliance="red"  isFav={favTeams.includes(n)} />
+                    <EpaChip key={n} teamNum={n} epa={epaData[n]} alliance="red"  isFav={fav.includes(n)} />
                 ))}
               </div>
               <span style={S.vs}>VS</span>
               <div style={S.chips}>
                 {blueNums.map(n => (
-                    <EpaChip key={n} teamNum={n} epa={epaData[n]} alliance="blue" isFav={favTeams.includes(n)} />
+                    <EpaChip key={n} teamNum={n} epa={epaData[n]} alliance="blue" isFav={fav.includes(n)} />
                 ))}
               </div>
               <AllianceTotal teams={blueNums} epaData={epaData} isRed={false} />

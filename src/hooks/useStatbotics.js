@@ -63,7 +63,7 @@ export function useStatbotics(teamNums, year) {
 
     useEffect(() => {
         if (teamNums?.length && year) {
-            fetchAll(teamNums, year);
+            fetchAll(teamNums.filter(n => n != null && !isNaN(n)), year);
         }
     }, [teamNums, year, fetchAll]);
 
