@@ -9,8 +9,8 @@ export default function StreamSidebar({
                                         teamData,
                                         favTeams,
                                       }) {
-  const fav = favTeams || [];
-  const { withFavOnField, withFavAtEvent } = categorizedEvents || { withFavOnField: [], withFavAtEvent: [] };
+  const fav = Array.isArray(favTeams) ? favTeams : [];
+  const { withFavOnField = [], withFavAtEvent = [] } = categorizedEvents || {};
 
   // All known event keys in priority order
   const allKnown = [
