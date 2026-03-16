@@ -17,6 +17,52 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { db, onValue, ref } from '../firebase.js';
 import { refreshTeam, refreshEvent } from '../utils/api.js';
 
+// ── Firebase download tracker (module-level) ──────────────────────────────
+const _dlStats = {
+  totalBytes: 0,
+  callCount: 0,
+  byPath: {},
+  sessionStart: Date.now(),
+};
+
+function _measureSnapshot(path, snap) {
+  try {
+    const val = snap.val();
+    if (val === null) return;
+    const bytes = new TextEncoder().encode(JSON.stringify(val)).length;
+    _dlStats.totalBytes += bytes;
+    _dlStats.callCount  += 1;
+    if (!_dlStats.byPath[path]) _dlStats.byPath[path] = { count: 0, bytes: 0 };
+    _dlStats.byPath[path].count += 1;
+    _dlStats.byPath[path].bytes += bytes;
+    const kb      = (bytes / 1024).toFixed(2);
+    const totalKb = (_dlStats.totalBytes / 1024).toFixed(2);
+    const elapsed = ((Date.now() - _dlStats.sessionStart) / 1000).toFixed(0);
+    console.log(`[Firebase ↓] ${path.padEnd(40)} ${kb.padStart(7)} KB  |  total ${totalKb} KB  (${_dlStats.callCount} reads, ${elapsed}s)`);
+    if (_dlStats.callCount % 20 === 0) {
+      console.group('[Firebase ↓] Breakdown by path');
+      Object.entries(_dlStats.byPath)
+          .sort((a,b) => b[1].bytes - a[1].bytes)
+          .forEach(([p, s]) => console.log(`  ${p.padEnd(40)} ${(s.bytes/1024).toFixed(2).padStart(7)} KB  (${s.count}x)`));
+      console.log(`  ${'TOTAL'.padEnd(40)} ${(_dlStats.totalBytes/1024).toFixed(2).padStart(7)} KB`);
+      console.groupEnd();
+    }
+  } catch {}
+}
+
+if (typeof window !== 'undefined') {
+  window._fbStats = () => {
+    const elapsed = ((Date.now() - _dlStats.sessionStart) / 1000).toFixed(0);
+    console.group(`[Firebase ↓] Full session report (${elapsed}s elapsed)`);
+    console.log(`Total: ${(_dlStats.totalBytes/1024).toFixed(2)} KB across ${_dlStats.callCount} reads`);
+    Object.entries(_dlStats.byPath)
+        .sort((a,b) => b[1].bytes - a[1].bytes)
+        .forEach(([p,s]) => console.log(`  ${p.padEnd(40)} ${(s.bytes/1024).toFixed(2).padStart(7)} KB  (${s.count}x)`));
+    console.groupEnd();
+  };
+}
+
+
 const TEAM_STALE_MS  = 30  * 60 * 1000; // 30 min — metadata only; status from webhooks
 const EVENT_STALE_MS = 60  * 60 * 1000; // 1 hr
 
@@ -60,9 +106,10 @@ export function useFirebase({
   const switchTimers  = useRef({}); // teamNum → timeoutId (offset timer)
   const endTimerRef   = useRef(null);
   const notifTimerRef = useRef(null);
-  const unsubsRef     = useRef([]); // Firebase onValue unsubscribers
-  const evalRef       = useRef(null); // always-current evaluateTeamUpdate
-  const ensureRef     = useRef(null); // always-current ensureEventData
+  const unsubsRef        = useRef([]); // Firebase onValue unsubscribers
+  const evalRef          = useRef(null); // always-current evaluateTeamUpdate
+  const ensureRef        = useRef(null); // always-current ensureEventData
+  const subscribedEvents = useRef(new Set()); // prevent duplicate event subscriptions
 
   stateRef.current = {
     favTeams: Array.isArray(favTeams) ? favTeams : [],
@@ -280,6 +327,9 @@ export function useFirebase({
   // ── Load event data — checks cache, triggers refresh if stale ─────────────
   const ensureEventData = useCallback(async (eventKey) => {
     if (!eventKey) return;
+    // Prevent duplicate subscriptions for the same event
+    if (subscribedEvents.current.has(eventKey)) return;
+    subscribedEvents.current.add(eventKey);
 
     // Subscribe to Firebase path
     const eventRef  = ref(db, `events/${eventKey}`);
@@ -315,8 +365,9 @@ export function useFirebase({
     unsubsRef.current = [];
     Object.values(switchTimers.current).forEach(clearTimeout);
     switchTimers.current = {};
+    subscribedEvents.current.clear();
 
-    const subscribedEvents = new Set();
+    const subscribedEventsLocal = new Set();
 
     for (const teamNum of favTeams) {
       const num = teamNum.toString();
@@ -338,8 +389,8 @@ export function useFirebase({
           evalRef.current?.(num, data);
 
           // Ensure event data is loaded
-          if (data.currentEvent && !subscribedEvents.has(data.currentEvent)) {
-            subscribedEvents.add(data.currentEvent);
+          if (data.currentEvent && !subscribedEventsLocal.has(data.currentEvent)) {
+            subscribedEventsLocal.add(data.currentEvent);
             ensureRef.current?.(data.currentEvent);
           }
         }
