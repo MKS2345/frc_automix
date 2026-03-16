@@ -6,6 +6,7 @@ import StreamSidebar     from './components/StreamSidebar.jsx';
 import MatchStatusBar    from './components/MatchStatusBar.jsx';
 import StreamViewer      from './components/StreamViewer.jsx';
 import MatchNotification from './components/MatchNotification.jsx';
+import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { useFirebase }   from './hooks/useFirebase.js';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { ensureAuth, setupPresence } from './firebase.js';
@@ -166,33 +167,33 @@ export default function App() {
 
         {/* ── Body ── */}
         <div style={S.body}>
-          <StreamSidebar
+          <ErrorBoundary><StreamSidebar
               categorizedEvents={categorizedEvents}
               currentStreamEvent={currentStreamEvent}
               switchToEvent={switchToEvent}
               eventData={eventData}
               teamData={teamData}
               favTeams={favTeams}
-          />
+          /></ErrorBoundary>
 
           <div style={S.main}>
-            <MatchStatusBar
+            <ErrorBoundary><MatchStatusBar
                 currentStreamEvent={currentStreamEvent}
                 eventData={eventData}
                 favTeams={favTeams}
                 onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
                 onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
-            />
-            <StreamViewer
+            /></ErrorBoundary>
+            <ErrorBoundary><StreamViewer
                 currentStreamEvent={currentStreamEvent}
                 eventData={eventData}
-            />
+            /></ErrorBoundary>
           </div>
         </div>
 
         {/* ── Settings panel ── */}
         {showSettings && (
-            <SettingsPanel
+            <ErrorBoundary><SettingsPanel
                 favTeams={favTeams}             setFavTeams={setFavTeams}
                 offsetSeconds={offsetSeconds}   setOffsetSeconds={setOffsetSeconds}
                 endOffsetSeconds={endOffsetSeconds} setEndOffsetSeconds={setEndOffsetSeconds}
@@ -202,17 +203,17 @@ export default function App() {
                 teamData={teamData}
                 eventData={eventData}
                 onClose={() => setShowSettings(false)}
-            />
+            /></ErrorBoundary>
         )}
 
         {/* ── Match notification ── */}
-        <MatchNotification
+        <ErrorBoundary><MatchNotification
             notification={notification}
             teamData={teamData}
             eventData={eventData}
             onAccept={acceptPendingSwitch}
             onDismiss={dismissNotification}
-        />
+        /></ErrorBoundary>
       </div>
   );
 }

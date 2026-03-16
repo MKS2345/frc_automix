@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 
 export default function MatchNotification({ notification, teamData, eventData, onAccept, onDismiss }) {
+  // Debug: log key props
+  console.log('[MatchNotification] render');
   const [progress, setProgress] = useState(100);
 
   useEffect(() => {
@@ -23,35 +25,35 @@ export default function MatchNotification({ notification, teamData, eventData, o
   const eventName = eventData[eventKey]?.shortName || eventData[eventKey]?.name || eventKey;
 
   return (
-    <div style={S.container}>
-      <div style={S.progressTrack}>
-        <div style={{ ...S.progressBar, width: `${progress}%` }} />
-      </div>
+      <div style={S.container}>
+        <div style={S.progressTrack}>
+          <div style={{ ...S.progressBar, width: `${progress}%` }} />
+        </div>
 
-      <div style={S.inner}>
-        <div style={S.icon}>{isHigherPriority ? '🔼' : '📺'}</div>
-        <div style={S.content}>
-          <div style={S.headline}>
-            <span style={S.teamNum}>#{teamNum}</span>
-            {teamName && <span style={S.teamName}> {teamName}</span>}
-            {isHigherPriority && <span style={S.priorityTag}>higher priority</span>}
+        <div style={S.inner}>
+          <div style={S.icon}>{isHigherPriority ? '🔼' : '📺'}</div>
+          <div style={S.content}>
+            <div style={S.headline}>
+              <span style={S.teamNum}>#{teamNum}</span>
+              {teamName && <span style={S.teamName}> {teamName}</span>}
+              {isHigherPriority && <span style={S.priorityTag}>higher priority</span>}
+            </div>
+            <div style={S.sub}>
+              <span style={S.eventBadge}>{eventName}</span>
+              {matchLabel && <span style={S.matchLabel}>{matchLabel}</span>}
+            </div>
+            <div style={S.note}>
+              {isHigherPriority
+                  ? 'Higher priority team on field — switch now?'
+                  : 'Match in progress on current stream.'}
+            </div>
           </div>
-          <div style={S.sub}>
-            <span style={S.eventBadge}>{eventName}</span>
-            {matchLabel && <span style={S.matchLabel}>{matchLabel}</span>}
+          <div style={S.actions}>
+            <button style={S.switchBtn} onClick={onAccept}>Switch</button>
+            <button style={S.dismissBtn} onClick={onDismiss}>Dismiss</button>
           </div>
-          <div style={S.note}>
-            {isHigherPriority
-              ? 'Higher priority team on field — switch now?'
-              : 'Match in progress on current stream.'}
-          </div>
-        </div>
-        <div style={S.actions}>
-          <button style={S.switchBtn} onClick={onAccept}>Switch</button>
-          <button style={S.dismissBtn} onClick={onDismiss}>Dismiss</button>
         </div>
       </div>
-    </div>
   );
 }
 

@@ -12,6 +12,8 @@ export default function SettingsPanel({
                                         teamData, eventData,
                                         onClose,
                                       }) {
+  // Debug: log key props
+  console.log('[SettingsPanel] render');
   const [newTeam,     setNewTeam]     = useState('');
   const [teamNames,   setTeamNames]   = useState({});
   const [loading,     setLoading]     = useState(false);
