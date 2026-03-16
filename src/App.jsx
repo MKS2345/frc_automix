@@ -180,12 +180,12 @@ export default function App() {
                 currentStreamEvent={currentStreamEvent}
                 eventData={eventData}
                 favTeams={favTeams}
+                onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
+                onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
             />
             <StreamViewer
                 currentStreamEvent={currentStreamEvent}
                 eventData={eventData}
-                onSelectStream={(idx) => currentStreamEvent && setActiveStream(currentStreamEvent, idx)}
-                onClearPin={() => currentStreamEvent && clearStreamPin(currentStreamEvent)}
             />
           </div>
         </div>
