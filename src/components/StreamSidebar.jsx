@@ -9,8 +9,6 @@ export default function StreamSidebar({
                                         teamData,
                                         favTeams,
                                       }) {
-  // Debug: log key props
-  console.log('[StreamSidebar] render');
   const fav = Array.isArray(favTeams) ? favTeams : [];
   const { withFavOnField = [], withFavAtEvent = [] } = categorizedEvents || {};
 

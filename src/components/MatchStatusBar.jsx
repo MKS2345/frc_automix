@@ -78,8 +78,6 @@ export default function MatchStatusBar({
                                          currentStreamEvent, eventData, favTeams,
                                          onSelectStream, onClearPin,
                                        }) {
-  // Debug: log key props
-  console.log('[MatchStatusBar] render');
   if (!currentStreamEvent) {
     return (
         <div style={{ ...S.bar, height: 52 }}>

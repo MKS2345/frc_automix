@@ -61,6 +61,8 @@ export function useFirebase({
   const endTimerRef   = useRef(null);
   const notifTimerRef = useRef(null);
   const unsubsRef     = useRef([]); // Firebase onValue unsubscribers
+  const evalRef       = useRef(null); // always-current evaluateTeamUpdate
+  const ensureRef     = useRef(null); // always-current ensureEventData
 
   stateRef.current = {
     favTeams: Array.isArray(favTeams) ? favTeams : [],
@@ -69,6 +71,9 @@ export function useFirebase({
     teamData, eventData, currentStreamEvent,
     isWatchingMatch, watchingMatchLabel, deferredSwitch,
   };
+  // These are updated every render so onValue callbacks always get latest version
+  // without needing to re-subscribe (avoids TDZ and stale closure bugs)
+  // evalRef and ensureRef are set after the functions are defined below
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   const dismissNotification = useCallback(() => {
@@ -269,6 +274,9 @@ export function useFirebase({
     }
   }, [dismissNotification, handleMatchEnded]);
 
+  // Sync to ref so onValue callback always has latest without re-subscribing
+  evalRef.current = evaluateTeamUpdate;
+
   // ── Load event data — checks cache, triggers refresh if stale ─────────────
   const ensureEventData = useCallback(async (eventKey) => {
     if (!eventKey) return;
@@ -276,6 +284,7 @@ export function useFirebase({
     // Subscribe to Firebase path
     const eventRef  = ref(db, `events/${eventKey}`);
     const unsub = onValue(eventRef, (snap) => {
+      _measureSnapshot(`events/${eventKey}`, snap);
       const data = snap.val();
       setEventData(prev => ({ ...prev, [eventKey]: data || {} }));
     });
@@ -284,6 +293,7 @@ export function useFirebase({
     // Check if refresh needed
     const snap = await new Promise(resolve => {
       const u = onValue(ref(db, `events/${eventKey}/streamsCheckedAt`), s => {
+        _measureSnapshot(`events/${eventKey}/streamsCheckedAt`, s);
         resolve(s); u();
       });
     });
@@ -292,6 +302,9 @@ export function useFirebase({
       refreshEvent(eventKey).catch(console.warn);
     }
   }, []);
+
+  // Sync to ref
+  ensureRef.current = ensureEventData;
 
   // ── Subscribe to fav team paths ────────────────────────────────────────────
   useEffect(() => {
@@ -310,6 +323,7 @@ export function useFirebase({
       const teamRef = ref(db, `teams/${num}`);
 
       const unsub = onValue(teamRef, async (snap) => {
+        _measureSnapshot(`teams/${num}`, snap);
         const data = snap.val();
         const now  = Date.now();
 
@@ -320,12 +334,13 @@ export function useFirebase({
 
         if (data) {
           setTeamData(prev => ({ ...prev, [num]: data }));
-          evaluateTeamUpdate(num, data);
+          // Use refs so we always call latest version without re-subscribing
+          evalRef.current?.(num, data);
 
           // Ensure event data is loaded
           if (data.currentEvent && !subscribedEvents.has(data.currentEvent)) {
             subscribedEvents.add(data.currentEvent);
-            ensureEventData(data.currentEvent);
+            ensureRef.current?.(data.currentEvent);
           }
         }
       });
@@ -339,7 +354,8 @@ export function useFirebase({
       Object.values(switchTimers.current).forEach(clearTimeout);
       switchTimers.current = {};
     };
-  }, [isAuthenticated, favTeams, evaluateTeamUpdate, ensureEventData]);
+    // evalRef/ensureRef used inside so no need to list callbacks as deps
+  }, [isAuthenticated, favTeams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Ensure event data for current stream event ─────────────────────────────
   useEffect(() => {
@@ -350,6 +366,7 @@ export function useFirebase({
   useEffect(() => {
     if (!isAuthenticated) return;
     const unsub = onValue(ref(db, 'presence'), (snap) => {
+      _measureSnapshot('presence', snap);
       setActiveSessions(snap.exists() ? Object.keys(snap.val() || {}).length : 0);
     });
     return () => unsub();

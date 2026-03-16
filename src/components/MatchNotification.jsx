@@ -2,8 +2,6 @@
 import { useEffect, useState } from 'react';
 
 export default function MatchNotification({ notification, teamData, eventData, onAccept, onDismiss }) {
-  // Debug: log key props
-  console.log('[MatchNotification] render');
   const [progress, setProgress] = useState(100);
 
   useEffect(() => {

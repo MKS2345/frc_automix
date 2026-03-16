@@ -94,12 +94,16 @@ export async function getIdToken() {
 // ── Active sessions listener ───────────────────────────────────────────────
 export function onActiveSessionsChange(callback) {
   return onValue(ref(db, 'presence'), (snap) => {
+    // Presence is small but fires frequently — worth tracking
+    const bytes = snap.exists() ? new TextEncoder().encode(JSON.stringify(snap.val())).length : 0;
+    console.log(`[Firebase ↓] presence (login screen)       ${(bytes/1024).toFixed(2).padStart(8)} KB`);
     callback(snap.exists() ? Object.keys(snap.val() || {}).length : 0);
   });
 }
 
 export function onTotalSessionsChange(callback) {
   return onValue(ref(db, 'analytics/totalSessions'), (snap) => {
+    console.log(`[Firebase ↓] analytics/totalSessions        ${(0).toFixed(2).padStart(8)} KB`);
     callback(snap.val() || 0);
   });
 }
