@@ -63,7 +63,8 @@ export function useFirebase({
   const unsubsRef     = useRef([]); // Firebase onValue unsubscribers
 
   stateRef.current = {
-    favTeams, offsetSeconds, endOffsetSeconds, forceSwitch,
+    favTeams: Array.isArray(favTeams) ? favTeams : [],
+    offsetSeconds, endOffsetSeconds, forceSwitch,
     afterMatchEnds, homeEvent,
     teamData, eventData, currentStreamEvent,
     isWatchingMatch, watchingMatchLabel, deferredSwitch,
@@ -384,7 +385,7 @@ export function useFirebase({
 
   // ── Categorized events for sidebar ─────────────────────────────────────────
   const categorizedEvents = (() => {
-    const fav = favTeams || [];
+    const fav = Array.isArray(favTeams) ? favTeams : [];
     const withFavOnField = [];
     const withFavAtEvent = [];
     const seen = new Set();

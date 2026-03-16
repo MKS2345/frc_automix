@@ -2,14 +2,15 @@
 import { normalizeStatus } from '../hooks/useFirebase.js';
 
 export default function StreamSidebar({
-  categorizedEvents,
-  currentStreamEvent,
-  switchToEvent,
-  eventData,
-  teamData,
-  favTeams,
-}) {
-  const { withFavOnField, withFavAtEvent } = categorizedEvents;
+                                        categorizedEvents,
+                                        currentStreamEvent,
+                                        switchToEvent,
+                                        eventData,
+                                        teamData,
+                                        favTeams,
+                                      }) {
+  const fav = favTeams || [];
+  const { withFavOnField, withFavAtEvent } = categorizedEvents || { withFavOnField: [], withFavAtEvent: [] };
 
   // All known event keys in priority order
   const allKnown = [
@@ -19,7 +20,7 @@ export default function StreamSidebar({
 
   // Get fav teams currently on field at an event
   const getFavTeamsOnField = (eventKey) => {
-    return favTeams.filter(n => {
+    return fav.filter(n => {
       const d = teamData[n.toString()];
       const s = normalizeStatus(d?.status);
       return d?.currentEvent === eventKey && (s === 'onField' || s === 'inProgress');
@@ -28,7 +29,7 @@ export default function StreamSidebar({
 
   // Get all fav teams at an event (regardless of status)
   const getFavTeamsAtEvent = (eventKey) => {
-    return favTeams.filter(n => teamData[n.toString()]?.currentEvent === eventKey);
+    return fav.filter(n => teamData[n.toString()]?.currentEvent === eventKey);
   };
 
   const groups = [
@@ -45,94 +46,94 @@ export default function StreamSidebar({
   ];
 
   return (
-    <div style={S.sidebar}>
-      <div style={S.header}>
-        <span style={S.headerTitle}>Events</span>
-        <span style={S.headerCount}>{allKnown.length} tracked</span>
-      </div>
+      <div style={S.sidebar}>
+        <div style={S.header}>
+          <span style={S.headerTitle}>Events</span>
+          <span style={S.headerCount}>{allKnown.length} tracked</span>
+        </div>
 
-      <div style={S.list}>
-        {groups.map(({ label, eventKeys, accent }) => {
-          if (!eventKeys.length) return null;
-          return (
-            <div key={label} style={S.group}>
-              <div style={S.groupLabel}>
-                <span style={{ ...S.groupDot, background: accent }} />
-                {label}
-              </div>
-              {eventKeys.map(ek => {
-                const edata      = eventData[ek] || {};
-                const isActive   = currentStreamEvent === ek;
-                const onField    = getFavTeamsOnField(ek);
-                const atEvent    = getFavTeamsAtEvent(ek);
-                const hasStream  = !!(edata.activeStream || edata.streams?.length);
-                const displayName = edata.shortName || edata.name || ek;
+        <div style={S.list}>
+          {groups.map(({ label, eventKeys, accent }) => {
+            if (!eventKeys.length) return null;
+            return (
+                <div key={label} style={S.group}>
+                  <div style={S.groupLabel}>
+                    <span style={{ ...S.groupDot, background: accent }} />
+                    {label}
+                  </div>
+                  {eventKeys.map(ek => {
+                    const edata      = eventData[ek] || {};
+                    const isActive   = currentStreamEvent === ek;
+                    const onField    = getFavTeamsOnField(ek);
+                    const atEvent    = getFavTeamsAtEvent(ek);
+                    const hasStream  = !!(edata.activeStream || edata.streams?.length);
+                    const displayName = edata.shortName || edata.name || ek;
 
-                return (
-                  <button
-                    key={ek}
-                    onClick={() => switchToEvent(ek)}
-                    style={{
-                      ...S.eventBtn,
-                      borderColor: isActive ? accent : '#1a2e4a',
-                      background: isActive
-                        ? `linear-gradient(135deg, ${accent}18, ${accent}08)`
-                        : '#0d1526',
-                      boxShadow: isActive ? `0 0 20px ${accent}22` : 'none',
-                    }}
-                  >
-                    <div style={S.eventBtnTop}>
-                      <span style={{ ...S.activeDot, background: isActive ? accent : '#1a2e4a' }} />
-                      <span style={S.eventName}>{displayName}</span>
-                      {hasStream && <span style={S.livePill}>LIVE</span>}
-                    </div>
+                    return (
+                        <button
+                            key={ek}
+                            onClick={() => switchToEvent(ek)}
+                            style={{
+                              ...S.eventBtn,
+                              borderColor: isActive ? accent : '#1a2e4a',
+                              background: isActive
+                                  ? `linear-gradient(135deg, ${accent}18, ${accent}08)`
+                                  : '#0d1526',
+                              boxShadow: isActive ? `0 0 20px ${accent}22` : 'none',
+                            }}
+                        >
+                          <div style={S.eventBtnTop}>
+                            <span style={{ ...S.activeDot, background: isActive ? accent : '#1a2e4a' }} />
+                            <span style={S.eventName}>{displayName}</span>
+                            {hasStream && <span style={S.livePill}>LIVE</span>}
+                          </div>
 
-                    <div style={S.eventBtnMid}>
-                      <span style={S.eventKey}>{ek}</span>
-                    </div>
+                          <div style={S.eventBtnMid}>
+                            <span style={S.eventKey}>{ek}</span>
+                          </div>
 
-                    {/* Fav teams on field */}
-                    {onField.length > 0 && (
-                      <div style={S.teamChips}>
-                        {onField.map(n => (
-                          <span key={n} style={{ ...S.teamChip, background: '#166534', borderColor: '#22c55e', color: '#4ade80' }}>
+                          {/* Fav teams on field */}
+                          {onField.length > 0 && (
+                              <div style={S.teamChips}>
+                                {onField.map(n => (
+                                    <span key={n} style={{ ...S.teamChip, background: '#166534', borderColor: '#22c55e', color: '#4ade80' }}>
                             ★ {n}
                           </span>
-                        ))}
-                      </div>
-                    )}
+                                ))}
+                              </div>
+                          )}
 
-                    {/* Fav teams at event but not on field */}
-                    {onField.length === 0 && atEvent.length > 0 && (
-                      <div style={S.teamChips}>
-                        {atEvent.slice(0, 4).map(n => (
-                          <span key={n} style={S.teamChip}>
+                          {/* Fav teams at event but not on field */}
+                          {onField.length === 0 && atEvent.length > 0 && (
+                              <div style={S.teamChips}>
+                                {atEvent.slice(0, 4).map(n => (
+                                    <span key={n} style={S.teamChip}>
                             {n}
                           </span>
-                        ))}
-                        {atEvent.length > 4 && (
-                          <span style={{ ...S.teamChip, color: '#374151' }}>
+                                ))}
+                                {atEvent.length > 4 && (
+                                    <span style={{ ...S.teamChip, color: '#374151' }}>
                             +{atEvent.length - 4}
                           </span>
-                        )}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          );
-        })}
+                                )}
+                              </div>
+                          )}
+                        </button>
+                    );
+                  })}
+                </div>
+            );
+          })}
 
-        {allKnown.length === 0 && (
-          <div style={S.empty}>
-            <div style={S.emptyIcon}>📡</div>
-            <div style={S.emptyTitle}>No events tracked</div>
-            <div style={S.emptySub}>Add favorite teams in Settings</div>
-          </div>
-        )}
+          {allKnown.length === 0 && (
+              <div style={S.empty}>
+                <div style={S.emptyIcon}>📡</div>
+                <div style={S.emptyTitle}>No events tracked</div>
+                <div style={S.emptySub}>Add favorite teams in Settings</div>
+              </div>
+          )}
+        </div>
       </div>
-    </div>
   );
 }
 
